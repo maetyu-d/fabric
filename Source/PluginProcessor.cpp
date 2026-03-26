@@ -13,7 +13,7 @@ struct FactoryPresetData {
 juce::String makeDefaultScript()
 {
     return R"pulse(
-patch pulse_default
+patch fabric_default
 
 scale D dorian
 
@@ -49,7 +49,7 @@ std::vector<FactoryPresetData> makeFactoryPresets()
     return {
         { "Default Arp",
             R"pulse(
-patch pulse_default
+patch fabric_default
 
 scale D dorian
 
@@ -410,12 +410,29 @@ generate clock metro
   every 1/16
 end
 
+generate progression form
+  targets tonic dominant tonic subdominant tonic
+  lengths 2 2 2 2 4
+end
+
+generate section scenes
+  start verse
+  section verse tonic 2 dominant 2
+  section chorus dominant 2 tonic 2
+  section bridge subdominant 2 tonic 2
+end
+
 generate collapse engine1
   notes C3 D3 Eb3 G3 A3 Bb3
   root C3
-  avoid repeated_intervals
-  avoid tonic
-  max step 2
+  ruleset stable avoid tonic no repeated intervals max 2 semitone steps prefer center 0.65 target tonic reform gentle recover to target follow phrase
+  ruleset broken from stable avoid target max 5 semitone steps prefer center 0.2 target dominant reform wild recover to dominant mutate 4
+  ruleset release from stable avoid subdominant max 3 semitone steps prefer center 0.8 reform rotate_root recover to tonic
+  use stable
+  on collapse cycle broken release stable
+  on section verse use stable
+  on section chorus blend broken 0.65
+  on section bridge blend release 0.75
   on collapse mutate 2
   seed 13
 end
@@ -431,6 +448,10 @@ output midi out
 end
 
 connect metro -> engine1.trigger
+connect metro -> form.trigger
+connect metro -> scenes.trigger
+connect form -> engine1.phrase
+connect scenes.section -> engine1.section
 connect engine1 -> notes1
 connect notes1 -> out
 end
@@ -675,7 +696,7 @@ class PulsePluginAudioProcessor::CompileJob final : public juce::ThreadPoolJob
 {
 public:
     CompileJob(PulsePluginAudioProcessor& owner, juce::String scriptText, std::uint64_t requestId)
-        : juce::ThreadPoolJob("PulseCompile")
+        : juce::ThreadPoolJob("FabricCompile")
         , owner_(owner)
         , scriptText_(std::move(scriptText))
         , requestId_(requestId)
@@ -743,12 +764,17 @@ void PulsePluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     context.sampleRate = sampleRate_.load();
     context.blockSize = static_cast<std::uint32_t>(buffer.getNumSamples());
     context.bpm = 120.0;
+    context.syncToTransport = syncToTransport_.load();
 
     if (auto* playHead = getPlayHead()) {
         if (const auto position = playHead->getPosition()) {
             if (const auto bpm = position->getBpm()) {
                 context.bpm = *bpm;
             }
+            if (const auto ppq = position->getPpqPosition()) {
+                context.transportPpq = *ppq;
+            }
+            context.transportPlaying = position->getIsPlaying();
         }
     }
 
@@ -803,6 +829,20 @@ void PulsePluginAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, j
     for (const auto& moduleName : state->outputModuleNames) {
         const auto events = state->engine->outputEvents(moduleName.toStdString());
         rendered.insert(rendered.end(), events.begin(), events.end());
+    }
+
+    if (const juce::SpinLock::ScopedTryLockType ioLock(ioSnapshotLock_); ioLock.isLocked()) {
+        updateActiveNotes(incomingActiveNotes_, incomingEvents);
+        updateActiveNotes(outgoingActiveNotes_, rendered);
+        pushHistory(incomingHistory_, static_cast<int>(incomingEvents.size()));
+        pushHistory(outgoingHistory_, static_cast<int>(rendered.size()));
+        ioSnapshot_ = buildIoSnapshot(incomingEvents, rendered);
+        ioSnapshot_.incomingActive = incomingActiveNotes_;
+        ioSnapshot_.outgoingActive = outgoingActiveNotes_;
+        ioSnapshot_.incomingHistory = incomingHistory_;
+        ioSnapshot_.outgoingHistory = outgoingHistory_;
+        ioSnapshot_.incomingActiveCount = countActiveNotes(incomingActiveNotes_);
+        ioSnapshot_.outgoingActiveCount = countActiveNotes(outgoingActiveNotes_);
     }
 
     eventsToMidiBuffer(rendered, context.sampleRate, static_cast<int>(context.blockSize), midiMessages);
@@ -879,14 +919,28 @@ void PulsePluginAudioProcessor::changeProgramName(int, const juce::String&)
 
 void PulsePluginAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
+    juce::ValueTree state("FabricState");
+    {
+        const juce::ScopedLock lock(uiStateLock_);
+        state.setProperty("script", scriptText_, nullptr);
+    }
+    state.setProperty("syncToTransport", syncToTransport_.load(), nullptr);
+
     juce::MemoryOutputStream stream(destData, false);
-    const juce::ScopedLock lock(uiStateLock_);
-    stream.writeString(scriptText_);
+    state.writeToStream(stream);
 }
 
 void PulsePluginAudioProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
     juce::MemoryInputStream stream(data, static_cast<size_t>(sizeInBytes), false);
+    if (const auto state = juce::ValueTree::readFromStream(stream); state.isValid()) {
+        syncToTransport_.store(static_cast<bool>(state.getProperty("syncToTransport", true)));
+        compileScript(state.getProperty("script", defaultScript()).toString());
+        uiRevision_.fetch_add(1);
+        return;
+    }
+
+    stream.setPosition(0);
     compileScript(stream.readString());
 }
 
@@ -929,8 +983,24 @@ std::vector<PulsePluginAudioProcessor::UiDiagnostic> PulsePluginAudioProcessor::
 
 PulsePluginAudioProcessor::GraphSnapshot PulsePluginAudioProcessor::getGraphSnapshot() const
 {
-    const juce::ScopedLock lock(uiStateLock_);
-    return graphSnapshot_;
+    GraphSnapshot snapshot;
+    {
+        const juce::ScopedLock lock(uiStateLock_);
+        snapshot = graphSnapshot_;
+    }
+
+    auto state = std::atomic_load(&activeState_);
+    if (state == nullptr || state->engine == nullptr) {
+        return snapshot;
+    }
+
+    for (auto& node : snapshot.nodes) {
+        if (const auto label = state->engine->activeStateLabel(node.name.toStdString()); label.has_value()) {
+            node.detail = juce::String(*label);
+        }
+    }
+
+    return snapshot;
 }
 
 std::vector<PulsePluginAudioProcessor::SectionControlSnapshot> PulsePluginAudioProcessor::getSectionControls() const
@@ -956,6 +1026,23 @@ std::vector<PulsePluginAudioProcessor::SectionControlSnapshot> PulsePluginAudioP
     return controls;
 }
 
+PulsePluginAudioProcessor::IoSnapshot PulsePluginAudioProcessor::getIoSnapshot() const
+{
+    const juce::SpinLock::ScopedLockType lock(ioSnapshotLock_);
+    return ioSnapshot_;
+}
+
+bool PulsePluginAudioProcessor::isSyncToTransportEnabled() const
+{
+    return syncToTransport_.load();
+}
+
+void PulsePluginAudioProcessor::setSyncToTransportEnabled(bool enabled)
+{
+    syncToTransport_.store(enabled);
+    uiRevision_.fetch_add(1);
+}
+
 std::uint64_t PulsePluginAudioProcessor::getUiRevision() const
 {
     return uiRevision_.load();
@@ -974,6 +1061,101 @@ void PulsePluginAudioProcessor::requestSectionRecall(const juce::String& moduleN
 
     const juce::ScopedLock lock(sectionRequestLock_);
     pendingSectionRecalls_[moduleName] = sectionIndex;
+}
+
+PulsePluginAudioProcessor::IoEventSummary PulsePluginAudioProcessor::summariseEvent(const pulse::Event& event)
+{
+    IoEventSummary summary;
+    if (event.type == pulse::SignalType::midi) {
+        const auto noteName = juce::MidiMessage::getMidiNoteName(event.noteNumber(), true, true, 3);
+        if (event.isNoteOn()) {
+            summary.text = "On  " + noteName + "  vel " + juce::String(event.velocityValue()) + "  ch " + juce::String(event.channel());
+            summary.isNoteOn = true;
+            return summary;
+        }
+        if (event.isNoteOff()) {
+            summary.text = "Off " + noteName + "  ch " + juce::String(event.channel());
+            summary.isNoteOff = true;
+            return summary;
+        }
+        summary.text = "MIDI " + juce::String(event.noteNumber());
+        return summary;
+    }
+
+    if (event.type == pulse::SignalType::trigger) {
+        summary.text = "Trigger";
+        return summary;
+    }
+    if (event.type == pulse::SignalType::gate) {
+        summary.text = "Gate " + juce::String(event.valueOr(0.0), 2);
+        return summary;
+    }
+    if (event.type == pulse::SignalType::pitch) {
+        summary.text = "Pitch " + juce::String(event.valueOr(0.0), 2);
+        return summary;
+    }
+    if (event.type == pulse::SignalType::value) {
+        summary.text = "Value " + juce::String(event.valueOr(0.0), 2);
+        return summary;
+    }
+
+    summary.text = "Event";
+    return summary;
+}
+
+PulsePluginAudioProcessor::IoSnapshot PulsePluginAudioProcessor::buildIoSnapshot(const std::vector<pulse::Event>& incoming,
+    const std::vector<pulse::Event>& outgoing)
+{
+    IoSnapshot snapshot;
+    snapshot.incomingCount = static_cast<int>(incoming.size());
+    snapshot.outgoingCount = static_cast<int>(outgoing.size());
+
+    constexpr std::size_t maxShown = 12;
+    snapshot.incoming.reserve(std::min(maxShown, incoming.size()));
+    snapshot.outgoing.reserve(std::min(maxShown, outgoing.size()));
+
+    for (std::size_t index = 0; index < incoming.size() && index < maxShown; ++index) {
+        snapshot.incoming.push_back(summariseEvent(incoming[index]));
+    }
+    for (std::size_t index = 0; index < outgoing.size() && index < maxShown; ++index) {
+        snapshot.outgoing.push_back(summariseEvent(outgoing[index]));
+    }
+
+    return snapshot;
+}
+
+void PulsePluginAudioProcessor::updateActiveNotes(std::array<std::uint8_t, 128>& activeNotes, const std::vector<pulse::Event>& events)
+{
+    for (const auto& event : events) {
+        if (event.type != pulse::SignalType::midi) {
+            continue;
+        }
+        const auto note = juce::jlimit(0, 127, event.noteNumber());
+        if (event.isNoteOn() && event.velocityValue() > 0) {
+            activeNotes[static_cast<std::size_t>(note)] = static_cast<std::uint8_t>(juce::jlimit(1, 127, event.velocityValue()));
+        } else if (event.isNoteOff() || (event.isNoteOn() && event.velocityValue() == 0)) {
+            activeNotes[static_cast<std::size_t>(note)] = 0;
+        }
+    }
+}
+
+void PulsePluginAudioProcessor::pushHistory(std::array<std::uint8_t, 32>& history, int count)
+{
+    for (std::size_t index = 0; index + 1 < history.size(); ++index) {
+        history[index] = history[index + 1];
+    }
+    history.back() = static_cast<std::uint8_t>(juce::jlimit(0, 255, count));
+}
+
+int PulsePluginAudioProcessor::countActiveNotes(const std::array<std::uint8_t, 128>& activeNotes)
+{
+    int total = 0;
+    for (const auto value : activeNotes) {
+        if (value > 0) {
+            ++total;
+        }
+    }
+    return total;
 }
 
 void PulsePluginAudioProcessor::requestSectionAdvance(const juce::String& moduleName)
@@ -1129,7 +1311,8 @@ PulsePluginAudioProcessor::GraphSnapshot PulsePluginAudioProcessor::graphFromEng
         snapshot.nodes.push_back({
             node.name,
             juce::String(pulse::toString(node.family)),
-            node.kind
+            node.kind,
+            {}
         });
     }
 

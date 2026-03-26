@@ -27,6 +27,9 @@ std::vector<PortInfo> defaultInputs(const Module& module)
         if (module.kind == "growth") {
             return { makePort("trigger", SignalType::trigger), makePort("phrase", SignalType::value) };
         }
+        if (module.kind == "collapse") {
+            return { makePort("trigger", SignalType::trigger), makePort("phrase", SignalType::value), makePort("section", SignalType::value) };
+        }
         return { makePort("trigger", SignalType::trigger) };
     }
 
@@ -147,7 +150,7 @@ std::vector<PortInfo> defaultOutputs(const Module& module)
     }
 
     if (module.family == ModuleFamily::generate && module.kind == "section") {
-        return { makePort("out", SignalType::value) };
+        return { makePort("out", SignalType::value), makePort("section", SignalType::value) };
     }
 
     if (module.family == ModuleFamily::shape && module.kind == "stages") {

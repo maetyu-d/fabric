@@ -326,7 +326,7 @@ public:
     explicit ClockNode(const Module& module)
     {
         if (const auto every = findPropertyValue(module, "every")) {
-            everySeconds_ = parseTimeToken(*every, 120.0);
+            everyToken_ = *every;
         }
     }
 
@@ -343,8 +343,32 @@ public:
         const auto out = outputs.find("out");
         if (out == outputs.end()) return;
 
-        const auto interval = everySeconds_ > 0.0 ? everySeconds_ : parseTimeToken("1/4", context.bpm);
+        const auto interval = parseTimeToken(everyToken_, context.bpm);
         const auto blockDuration = static_cast<double>(context.blockSize) / context.sampleRate;
+
+        if (context.syncToTransport) {
+            if (!context.transportPlaying || context.bpm <= 0.0) {
+                return;
+            }
+
+            const auto beatLengthSeconds = 60.0 / context.bpm;
+            const auto intervalBeats = std::max(1.0e-6, interval / beatLengthSeconds);
+            const auto blockBeats = blockDuration / beatLengthSeconds;
+            const auto startBeat = context.transportPpq;
+            const auto endBeat = startBeat + blockBeats;
+            auto nextBeat = std::ceil((startBeat - 1.0e-9) / intervalBeats) * intervalBeats;
+            if (nextBeat < startBeat - 1.0e-9) {
+                nextBeat += intervalBeats;
+            }
+
+            while (nextBeat <= endBeat + 1.0e-9) {
+                const auto eventTime = (nextBeat - startBeat) * beatLengthSeconds;
+                out->second->push(Event::makeTrigger(std::max(0.0, eventTime)));
+                nextBeat += intervalBeats;
+            }
+            return;
+        }
+
         const auto start = elapsedSeconds_;
         const auto end = elapsedSeconds_ + blockDuration;
 
@@ -364,7 +388,7 @@ public:
 
 private:
     double sampleRate_ = 44100.0;
-    double everySeconds_ = 0.125;
+    std::string everyToken_ = "1/8";
     double elapsedSeconds_ = 0.0;
     double nextTriggerSeconds_ = 0.0;
 };
@@ -682,6 +706,14 @@ public:
         return advanceCount_;
     }
 
+    [[nodiscard]] std::optional<std::string> activeStateLabel() const override
+    {
+        if (sections_.empty()) {
+            return std::nullopt;
+        }
+        return sections_[currentSection_ % sections_.size()].name;
+    }
+
     void process(const ProcessContext&,
         const std::unordered_map<std::string, const EventBuffer*>& inputs,
         std::unordered_map<std::string, EventBuffer*>& outputs) override
@@ -697,6 +729,9 @@ public:
 
         for (const auto& event : trigger->second->events()) {
             out->second->push(Event::makeValue(currentTarget(), event.time));
+            if (const auto sectionOut = outputs.find("section"); sectionOut != outputs.end()) {
+                sectionOut->second->push(Event::makeValue(static_cast<double>(currentSection_), event.time));
+            }
             advance();
         }
     }
@@ -1674,17 +1709,83 @@ public:
         }
 
         for (const auto& property : module.properties) {
+            if (property.key == "ruleset" && property.values.size() >= 2) {
+                ruleSets_[property.values[0]] = parseRuleSet(property.values);
+                continue;
+            }
+
+            if (property.key == "use" && !property.values.empty()) {
+                initialRuleSetName_ = property.values[0];
+                continue;
+            }
+
             if (property.key == "avoid" && !property.values.empty()) {
                 if (property.values[0] == "tonic") avoidTonic_ = true;
+                if (property.values[0] == "dominant") avoidDegree_ = 4;
+                if (property.values[0] == "subdominant") avoidDegree_ = 3;
+                if (property.values[0] == "target") avoidTarget_ = true;
                 if (property.values[0] == "repeated_intervals") avoidRepeatedIntervals_ = true;
+            }
+
+            if (property.key == "no" && property.values.size() >= 2) {
+                if (property.values[0] == "repeated" && property.values[1] == "intervals") {
+                    avoidRepeatedIntervals_ = true;
+                }
             }
 
             if (property.key == "max" && property.values.size() >= 2 && property.values[0] == "step") {
                 maxStep_ = std::max(1, std::stoi(property.values[1]));
             }
+            if (property.key == "max" && property.values.size() >= 3 && property.values[1] == "semitone") {
+                maxStep_ = std::max(1, std::stoi(property.values[0]));
+            }
 
             if (property.key == "on" && property.values.size() >= 3 && property.values[0] == "collapse" && property.values[1] == "mutate") {
                 mutationAmount_ = std::max(1, std::stoi(property.values[2]));
+            }
+            if (property.key == "on" && property.values.size() >= 3 && property.values[0] == "collapse" && property.values[1] == "use") {
+                collapseUseRuleSet_ = property.values[2];
+            }
+            if (property.key == "on" && property.values.size() >= 4 && property.values[0] == "collapse" && property.values[1] == "cycle") {
+                collapseCycleRuleSets_.assign(property.values.begin() + 2, property.values.end());
+            }
+            if (property.key == "on" && property.values.size() >= 4 && property.values[0] == "section" && property.values[2] == "use") {
+                sectionRuleSets_[property.values[1]] = property.values[3];
+                if (std::find(sectionNames_.begin(), sectionNames_.end(), property.values[1]) == sectionNames_.end()) {
+                    sectionNames_.push_back(property.values[1]);
+                }
+            }
+            if (property.key == "on" && property.values.size() >= 5 && property.values[0] == "section" && property.values[2] == "blend") {
+                sectionBlends_[property.values[1]] = SectionBlend { property.values[3], std::clamp(std::stod(property.values[4]), 0.0, 1.0) };
+                if (std::find(sectionNames_.begin(), sectionNames_.end(), property.values[1]) == sectionNames_.end()) {
+                    sectionNames_.push_back(property.values[1]);
+                }
+            }
+            if (property.key == "on" && property.values.size() >= 4 && property.values[0] == "collapse" && property.values[1] == "reform") {
+                reformMode_ = property.values[2];
+                reformStrength_ = std::max(1, std::stoi(property.values[3]));
+            } else if (property.key == "on" && property.values.size() >= 3 && property.values[0] == "collapse" && property.values[1] == "reform") {
+                reformMode_ = property.values[2];
+            }
+
+            if (property.key == "reform" && !property.values.empty()) {
+                reformMode_ = property.values[0];
+            }
+
+            if (property.key == "recover" && property.values.size() >= 2 && property.values[0] == "to") {
+                recoverTarget_ = property.values[1];
+            }
+
+            if (property.key == "prefer" && property.values.size() >= 2 && property.values[0] == "center") {
+                preferCenter_ = std::clamp(std::stod(property.values[1]), 0.0, 1.0);
+            }
+
+            if (property.key == "follow" && !property.values.empty() && property.values[0] == "phrase") {
+                followPhrase_ = true;
+            }
+
+            if (property.key == "target" && !property.values.empty()) {
+                staticTargetDegree_ = parseFunctionalTarget(property.values[0]);
             }
 
             if (property.key == "seed" && !property.values.empty()) {
@@ -1692,14 +1793,22 @@ public:
                 state_ = seed_;
             }
         }
+
+        defaultRuleSet_ = captureCurrentRuleSet();
     }
 
     void reset(double) override
     {
         state_ = seed_;
+        applyRuleSet(defaultRuleSet_, true);
+        if (!initialRuleSetName_.empty()) {
+            applyNamedRuleSet(initialRuleSetName_, true);
+        }
         lastNote_ = notes_.front();
         lastInterval_.reset();
         collapsePulse_ = 0.0;
+        activePhraseTarget_ = 0;
+        collapseCycleIndex_ = 0;
     }
 
     void process(const ProcessContext&,
@@ -1713,6 +1822,8 @@ public:
         }
 
         for (const auto& event : trigger->second->events()) {
+            activePhraseTarget_ = phraseTargetAtTime(inputs, event.time).value_or(activePhraseTarget_);
+            updateSectionRuleSet(inputs, event.time);
             const auto next = chooseNextNote();
             if (next.has_value()) {
                 const auto interval = *next - lastNote_;
@@ -1721,7 +1832,7 @@ public:
                 collapsePulse_ = 0.0;
                 out->second->push(Event::makePitch(static_cast<double>(*next), event.time));
             } else {
-                mutateRules();
+                reformOnCollapse();
                 collapsePulse_ = 1.0;
                 out->second->push(Event::makePitch(static_cast<double>(lastNote_), event.time));
             }
@@ -1733,16 +1844,48 @@ public:
     }
 
 private:
-    [[nodiscard]] std::optional<int> chooseNextNote() const
+    struct RuleSet {
+        std::optional<bool> avoidTonic;
+        std::optional<int> avoidDegree;
+        std::optional<bool> avoidTarget;
+        std::optional<bool> avoidRepeatedIntervals;
+        std::optional<int> maxStep;
+        std::optional<double> preferCenter;
+        std::optional<int> targetDegree;
+        std::optional<std::string> reformMode;
+        std::optional<std::string> recoverTarget;
+        std::optional<int> mutationAmount;
+        std::optional<bool> followPhrase;
+    };
+
+    struct SectionBlend {
+        std::string ruleSetName;
+        double amount = 0.5;
+    };
+
+    struct Candidate {
+        int note = 60;
+        double weight = 1.0;
+    };
+
+    [[nodiscard]] std::optional<int> chooseNextNote()
     {
-        std::vector<int> candidates;
+        std::vector<Candidate> candidates;
+        const auto targetDegree = resolvedTargetDegree();
+        const auto resolvedMaxStep = effectiveMaxStep();
         for (const auto note : notes_) {
             if (avoidTonic_ && (((note - root_) % 12) + 12) % 12 == 0) {
                 continue;
             }
+            if (avoidDegree_.has_value() && scaleDegreeClass(note) == *avoidDegree_) {
+                continue;
+            }
+            if (avoidTarget_ && scaleDegreeClass(note) == targetDegree) {
+                continue;
+            }
 
             const auto step = std::abs(note - lastNote_);
-            if (step > maxStep_) {
+            if (step > resolvedMaxStep) {
                 continue;
             }
 
@@ -1751,29 +1894,429 @@ private:
                 continue;
             }
 
-            candidates.push_back(note);
+            candidates.push_back({ note, candidateWeight(note, targetDegree) });
         }
 
         if (candidates.empty()) {
             return std::nullopt;
         }
 
-        return candidates[static_cast<std::size_t>(nextBits() % candidates.size())];
+        auto totalWeight = 0.0;
+        for (const auto& candidate : candidates) {
+            totalWeight += std::max(0.01, candidate.weight);
+        }
+
+        auto choice = randomUnit() * totalWeight;
+        for (const auto& candidate : candidates) {
+            choice -= std::max(0.01, candidate.weight);
+            if (choice <= 0.0) {
+                return candidate.note;
+            }
+        }
+
+        return candidates.back().note;
     }
 
-    void mutateRules()
+    void reformOnCollapse()
     {
-        for (int i = 0; i < mutationAmount_; ++i) {
-            const auto choice = nextBits() % 3u;
+        if (!collapseCycleRuleSets_.empty()) {
+            applyNamedRuleSet(collapseCycleRuleSets_[collapseCycleIndex_ % collapseCycleRuleSets_.size()], true);
+            collapseCycleIndex_ = (collapseCycleIndex_ + 1) % collapseCycleRuleSets_.size();
+        } else if (!collapseUseRuleSet_.empty()) {
+            applyNamedRuleSet(collapseUseRuleSet_, true);
+        }
+
+        if (reformMode_ == "rotate_pool") {
+            rotatePool();
+        } else if (reformMode_ == "rotate_root") {
+            rotateRoot();
+        } else if (reformMode_ == "wild") {
+            mutateRules(mutationAmount_ + reformStrength_);
+            rotatePool();
+            rotateRoot();
+        } else {
+            mutateRules(std::max(1, mutationAmount_));
+        }
+
+        applyRecoveryTarget();
+        lastInterval_.reset();
+    }
+
+    [[nodiscard]] RuleSet parseRuleSet(const std::vector<std::string>& values) const
+    {
+        RuleSet ruleSet;
+        std::size_t index = 1;
+        if (values.size() >= 3 && values[1] == "from") {
+            if (const auto found = ruleSets_.find(values[2]); found != ruleSets_.end()) {
+                ruleSet = found->second;
+            }
+            index = 3;
+        }
+
+        for (; index < values.size(); ++index) {
+            const auto& token = values[index];
+            if (token == "avoid" && (index + 1) < values.size()) {
+                const auto& next = values[index + 1];
+                if (next == "tonic") ruleSet.avoidTonic = true;
+                if (next == "dominant") ruleSet.avoidDegree = 4;
+                if (next == "subdominant") ruleSet.avoidDegree = 3;
+                if (next == "target") ruleSet.avoidTarget = true;
+                ++index;
+                continue;
+            }
+            if (token == "no" && (index + 2) < values.size() && values[index + 1] == "repeated" && values[index + 2] == "intervals") {
+                ruleSet.avoidRepeatedIntervals = true;
+                index += 2;
+                continue;
+            }
+            if (token == "max" && (index + 3) < values.size() && values[index + 2] == "semitone" && values[index + 3] == "steps") {
+                ruleSet.maxStep = std::max(1, std::stoi(values[index + 1]));
+                index += 3;
+                continue;
+            }
+            if (token == "max" && (index + 2) < values.size() && values[index + 1] == "step") {
+                ruleSet.maxStep = std::max(1, std::stoi(values[index + 2]));
+                index += 2;
+                continue;
+            }
+            if (token == "prefer" && (index + 2) < values.size() && values[index + 1] == "center") {
+                ruleSet.preferCenter = std::clamp(std::stod(values[index + 2]), 0.0, 1.0);
+                index += 2;
+                continue;
+            }
+            if (token == "target" && (index + 1) < values.size()) {
+                ruleSet.targetDegree = parseFunctionalTarget(values[index + 1]);
+                ++index;
+                continue;
+            }
+            if (token == "reform" && (index + 1) < values.size()) {
+                ruleSet.reformMode = values[index + 1];
+                ++index;
+                continue;
+            }
+            if (token == "recover" && (index + 2) < values.size() && values[index + 1] == "to") {
+                ruleSet.recoverTarget = values[index + 2];
+                index += 2;
+                continue;
+            }
+            if (token == "mutate" && (index + 1) < values.size()) {
+                ruleSet.mutationAmount = std::max(1, std::stoi(values[index + 1]));
+                ++index;
+                continue;
+            }
+            if (token == "follow" && (index + 1) < values.size() && values[index + 1] == "phrase") {
+                ruleSet.followPhrase = true;
+                ++index;
+                continue;
+            }
+        }
+        return ruleSet;
+    }
+
+    [[nodiscard]] RuleSet captureCurrentRuleSet() const
+    {
+        RuleSet ruleSet;
+        ruleSet.avoidTonic = avoidTonic_;
+        ruleSet.avoidDegree = avoidDegree_;
+        ruleSet.avoidTarget = avoidTarget_;
+        ruleSet.avoidRepeatedIntervals = avoidRepeatedIntervals_;
+        ruleSet.maxStep = maxStep_;
+        ruleSet.preferCenter = preferCenter_;
+        ruleSet.targetDegree = staticTargetDegree_;
+        ruleSet.reformMode = reformMode_;
+        ruleSet.recoverTarget = recoverTarget_;
+        ruleSet.mutationAmount = mutationAmount_;
+        ruleSet.followPhrase = followPhrase_;
+        return ruleSet;
+    }
+
+    void applyRuleSet(const RuleSet& ruleSet, bool replace)
+    {
+        if (replace) {
+            avoidTonic_ = false;
+            avoidDegree_.reset();
+            avoidTarget_ = false;
+            avoidRepeatedIntervals_ = false;
+            maxStep_ = 2;
+            preferCenter_ = 0.45;
+            staticTargetDegree_ = 0;
+            reformMode_ = "gentle";
+            recoverTarget_ = "target";
+            mutationAmount_ = 2;
+            followPhrase_ = false;
+        }
+
+        if (ruleSet.avoidTonic.has_value()) avoidTonic_ = *ruleSet.avoidTonic;
+        if (ruleSet.avoidDegree.has_value()) avoidDegree_ = *ruleSet.avoidDegree;
+        if (ruleSet.avoidTarget.has_value()) avoidTarget_ = *ruleSet.avoidTarget;
+        if (ruleSet.avoidRepeatedIntervals.has_value()) avoidRepeatedIntervals_ = *ruleSet.avoidRepeatedIntervals;
+        if (ruleSet.maxStep.has_value()) maxStep_ = *ruleSet.maxStep;
+        if (ruleSet.preferCenter.has_value()) preferCenter_ = *ruleSet.preferCenter;
+        if (ruleSet.targetDegree.has_value()) staticTargetDegree_ = *ruleSet.targetDegree;
+        if (ruleSet.reformMode.has_value()) reformMode_ = *ruleSet.reformMode;
+        if (ruleSet.recoverTarget.has_value()) recoverTarget_ = *ruleSet.recoverTarget;
+        if (ruleSet.mutationAmount.has_value()) mutationAmount_ = *ruleSet.mutationAmount;
+        if (ruleSet.followPhrase.has_value()) followPhrase_ = *ruleSet.followPhrase;
+    }
+
+    void applyNamedRuleSet(const std::string& name, bool replace)
+    {
+        if (const auto found = ruleSets_.find(name); found != ruleSets_.end()) {
+            applyRuleSet(found->second, replace);
+            activeRuleSetName_ = name;
+            activeStateLabel_ = name;
+        }
+    }
+
+    void applyBlendedRuleSet(const std::string& name, double amount)
+    {
+        if (const auto found = ruleSets_.find(name); found != ruleSets_.end()) {
+            const auto blended = blendRuleSets(captureCurrentRuleSet(), found->second, amount);
+            applyRuleSet(blended, true);
+            activeRuleSetName_ = name;
+            activeStateLabel_ = name + " " + std::to_string(static_cast<int>(std::lround(amount * 100.0))) + "%";
+        }
+    }
+
+    void updateSectionRuleSet(const std::unordered_map<std::string, const EventBuffer*>& inputs, double eventTime)
+    {
+        const auto sectionInput = inputs.find("section");
+        if (sectionInput == inputs.end() || sectionInput->second->events().empty()) {
+            return;
+        }
+
+        double selected = sectionInput->second->events().front().valueOr(0.0);
+        for (const auto& event : sectionInput->second->events()) {
+            if (event.time > eventTime + 1.0e-9) {
+                break;
+            }
+            selected = event.valueOr(selected);
+        }
+
+        const auto index = std::clamp(static_cast<int>(std::lround(selected)), 0, static_cast<int>(sectionNames_.size()) - 1);
+        if (sectionNames_.empty()) {
+            return;
+        }
+        const auto& sectionName = sectionNames_[static_cast<std::size_t>(index)];
+        if (sectionName == activeSectionName_) {
+            return;
+        }
+        activeSectionName_ = sectionName;
+
+        if (const auto blend = sectionBlends_.find(sectionName); blend != sectionBlends_.end()) {
+            applyBlendedRuleSet(blend->second.ruleSetName, blend->second.amount);
+            return;
+        }
+
+        if (const auto found = sectionRuleSets_.find(sectionName); found != sectionRuleSets_.end() && found->second != activeRuleSetName_) {
+            applyNamedRuleSet(found->second, true);
+        }
+    }
+
+    [[nodiscard]] std::optional<std::string> activeStateLabel() const override
+    {
+        if (activeRuleSetName_.empty() && activeStateLabel_.empty()) {
+            return std::nullopt;
+        }
+        return activeStateLabel_.empty() ? std::optional<std::string>(activeRuleSetName_) : std::optional<std::string>(activeStateLabel_);
+    }
+
+    [[nodiscard]] static RuleSet blendRuleSets(const RuleSet& from, const RuleSet& to, double amount)
+    {
+        RuleSet result = from;
+        auto mixOptionalInt = [amount](const std::optional<int>& a, const std::optional<int>& b) -> std::optional<int> {
+            if (!a.has_value()) return b;
+            if (!b.has_value()) return a;
+            return static_cast<int>(std::lround((*a * (1.0 - amount)) + (*b * amount)));
+        };
+        auto mixOptionalDouble = [amount](const std::optional<double>& a, const std::optional<double>& b) -> std::optional<double> {
+            if (!a.has_value()) return b;
+            if (!b.has_value()) return a;
+            return (*a * (1.0 - amount)) + (*b * amount);
+        };
+        auto chooseOptionalBool = [amount](const std::optional<bool>& a, const std::optional<bool>& b) -> std::optional<bool> {
+            if (!a.has_value()) return b;
+            if (!b.has_value()) return a;
+            return amount >= 0.5 ? b : a;
+        };
+        auto chooseOptionalString = [amount](const std::optional<std::string>& a, const std::optional<std::string>& b) -> std::optional<std::string> {
+            if (!a.has_value()) return b;
+            if (!b.has_value()) return a;
+            return amount >= 0.5 ? b : a;
+        };
+
+        result.avoidTonic = chooseOptionalBool(from.avoidTonic, to.avoidTonic);
+        result.avoidDegree = mixOptionalInt(from.avoidDegree, to.avoidDegree);
+        result.avoidTarget = chooseOptionalBool(from.avoidTarget, to.avoidTarget);
+        result.avoidRepeatedIntervals = chooseOptionalBool(from.avoidRepeatedIntervals, to.avoidRepeatedIntervals);
+        result.maxStep = mixOptionalInt(from.maxStep, to.maxStep);
+        result.preferCenter = mixOptionalDouble(from.preferCenter, to.preferCenter);
+        result.targetDegree = mixOptionalInt(from.targetDegree, to.targetDegree);
+        result.reformMode = chooseOptionalString(from.reformMode, to.reformMode);
+        result.recoverTarget = chooseOptionalString(from.recoverTarget, to.recoverTarget);
+        result.mutationAmount = mixOptionalInt(from.mutationAmount, to.mutationAmount);
+        result.followPhrase = chooseOptionalBool(from.followPhrase, to.followPhrase);
+        return result;
+    }
+
+    void mutateRules(int amount)
+    {
+        for (int i = 0; i < amount; ++i) {
+            const auto choice = nextBits() % 5u;
             if (choice == 0u) {
                 avoidTonic_ = !avoidTonic_;
             } else if (choice == 1u) {
                 avoidRepeatedIntervals_ = !avoidRepeatedIntervals_;
-            } else {
+            } else if (choice == 2u) {
                 maxStep_ = std::clamp(maxStep_ + ((nextBits() & 1u) == 0u ? -1 : 1), 1, 12);
+            } else if (choice == 3u) {
+                preferCenter_ = std::clamp(preferCenter_ + (((nextBits() & 1u) == 0u) ? -0.15 : 0.15), 0.0, 1.0);
+            } else {
+                avoidTarget_ = !avoidTarget_;
             }
         }
-        lastInterval_.reset();
+    }
+
+    void rotatePool()
+    {
+        if (notes_.size() > 1) {
+            const auto distance = static_cast<std::size_t>(1 + (nextBits() % static_cast<std::uint32_t>(notes_.size() - 1)));
+            std::rotate(notes_.begin(), notes_.begin() + static_cast<std::ptrdiff_t>(distance), notes_.end());
+        }
+    }
+
+    void rotateRoot()
+    {
+        const auto target = targetPitch();
+        auto best = root_;
+        auto bestDistance = std::numeric_limits<int>::max();
+        for (const auto note : notes_) {
+            const auto distance = std::abs(note - target);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = note;
+            }
+        }
+        root_ = best;
+    }
+
+    void applyRecoveryTarget()
+    {
+        const auto target = targetPitch();
+        if (reformMode_ == "gentle" || reformMode_ == "wild" || reformMode_ == "rotate_root") {
+            lastNote_ = nearestNoteTo(target);
+        }
+    }
+
+    [[nodiscard]] int nearestNoteTo(int target) const
+    {
+        auto best = notes_.front();
+        auto bestDistance = std::numeric_limits<int>::max();
+        for (const auto note : notes_) {
+            const auto distance = std::abs(note - target);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = note;
+            }
+        }
+        return best;
+    }
+
+    [[nodiscard]] int targetPitch() const
+    {
+        const auto degree = recoverTarget_ == "target"
+            ? resolvedTargetDegree()
+            : parseFunctionalTarget(recoverTarget_);
+        return targetPitchNear(lastNote_, degree);
+    }
+
+    [[nodiscard]] double candidateWeight(int note, int targetDegree) const
+    {
+        auto weight = 1.0;
+        weight += std::max(0.0, 1.0 - (std::abs(note - lastNote_) / 8.0)) * 0.45;
+        weight += std::max(0.0, 1.0 - (std::abs(note - root_) / 18.0)) * preferCenter_ * 0.55;
+        weight += std::max(0.0, 1.0 - (std::abs(note - targetPitchNear(lastNote_, targetDegree)) / 14.0)) * 0.65;
+        return weight;
+    }
+
+    [[nodiscard]] int effectiveMaxStep() const
+    {
+        if (!followPhrase_) {
+            return maxStep_;
+        }
+        if (activePhraseTarget_ == 4) {
+            return std::min(12, maxStep_ + 2);
+        }
+        if (activePhraseTarget_ == 0) {
+            return std::max(1, maxStep_ - 1);
+        }
+        return maxStep_;
+    }
+
+    [[nodiscard]] int resolvedTargetDegree() const
+    {
+        return followPhrase_ ? activePhraseTarget_ : staticTargetDegree_;
+    }
+
+    [[nodiscard]] int scaleDegreeClass(int note) const
+    {
+        const auto interval = (((note - root_) % 12) + 12) % 12;
+        if (interval == 7) return 4;
+        if (interval == 5) return 3;
+        return 0;
+    }
+
+    [[nodiscard]] int targetPitchNear(int anchor, int degree) const
+    {
+        const auto pitchClass = rootPitchClass() + functionalSemitoneOffset(degree);
+        auto best = anchor;
+        auto bestDistance = std::numeric_limits<int>::max();
+        for (int octave = -4; octave <= 4; ++octave) {
+            const auto candidate = ((anchor / 12) + octave) * 12 + ((pitchClass % 12 + 12) % 12);
+            const auto distance = std::abs(candidate - anchor);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = candidate;
+            }
+        }
+        return best;
+    }
+
+    [[nodiscard]] int rootPitchClass() const
+    {
+        return ((root_ % 12) + 12) % 12;
+    }
+
+    [[nodiscard]] static int parseFunctionalTarget(const std::string& value)
+    {
+        if (value == "dominant") return 4;
+        if (value == "subdominant") return 3;
+        return 0;
+    }
+
+    [[nodiscard]] static int functionalSemitoneOffset(int degree)
+    {
+        if (degree == 4) return 7;
+        if (degree == 3) return 5;
+        return 0;
+    }
+
+    [[nodiscard]] static std::optional<int> phraseTargetAtTime(const std::unordered_map<std::string, const EventBuffer*>& inputs, double eventTime)
+    {
+        const auto input = inputs.find("phrase");
+        if (input == inputs.end() || input->second->events().empty()) {
+            return std::nullopt;
+        }
+
+        double selected = input->second->events().front().valueOr(0.0);
+        for (const auto& event : input->second->events()) {
+            if (event.time > eventTime + 1.0e-9) {
+                break;
+            }
+            selected = event.valueOr(selected);
+        }
+
+        return static_cast<int>(std::lround(selected));
     }
 
     [[nodiscard]] std::uint32_t nextBits() const
@@ -1782,16 +2325,42 @@ private:
         return state_;
     }
 
+    [[nodiscard]] double randomUnit() const
+    {
+        return static_cast<double>(nextBits() & 0x00ffffffu) / static_cast<double>(0x01000000u);
+    }
+
     std::vector<int> notes_;
     int root_ = 48;
     mutable std::uint32_t seed_ = 91;
     mutable std::uint32_t state_ = 91;
+    std::unordered_map<std::string, RuleSet> ruleSets_;
+    std::unordered_map<std::string, std::string> sectionRuleSets_;
+    std::unordered_map<std::string, SectionBlend> sectionBlends_;
+    std::vector<std::string> sectionNames_;
+    RuleSet defaultRuleSet_;
+    std::string initialRuleSetName_;
+    std::string activeRuleSetName_;
+    std::string activeStateLabel_;
+    std::string activeSectionName_;
+    std::string collapseUseRuleSet_;
+    std::vector<std::string> collapseCycleRuleSets_;
+    std::size_t collapseCycleIndex_ = 0;
     int lastNote_ = 48;
     std::optional<int> lastInterval_;
     int maxStep_ = 2;
     int mutationAmount_ = 2;
     bool avoidTonic_ = true;
     bool avoidRepeatedIntervals_ = true;
+    bool avoidTarget_ = false;
+    bool followPhrase_ = false;
+    std::optional<int> avoidDegree_;
+    int staticTargetDegree_ = 0;
+    int activePhraseTarget_ = 0;
+    double preferCenter_ = 0.45;
+    std::string reformMode_ = "gentle";
+    std::string recoverTarget_ = "target";
+    int reformStrength_ = 1;
     double collapsePulse_ = 0.0;
 };
 
@@ -4356,6 +4925,11 @@ std::optional<std::uint64_t> RuntimeNode::sectionAdvanceCount() const
     return std::nullopt;
 }
 
+std::optional<std::string> RuntimeNode::activeStateLabel() const
+{
+    return std::nullopt;
+}
+
 void EventBuffer::clear()
 {
     events_.clear();
@@ -4558,6 +5132,16 @@ std::optional<std::uint64_t> RuntimeGraph::sectionAdvanceCount(const std::string
     }
 
     return nodes_[*node]->sectionAdvanceCount();
+}
+
+std::optional<std::string> RuntimeGraph::activeStateLabel(const std::string& moduleName) const
+{
+    const auto node = findNodeIndex(moduleName);
+    if (!node.has_value()) {
+        return std::nullopt;
+    }
+
+    return nodes_[*node]->activeStateLabel();
 }
 
 } // namespace pulse

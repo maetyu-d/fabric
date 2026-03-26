@@ -16,7 +16,7 @@ const auto kAccentSoft = juce::Colour::fromRGBA(201, 110, 46, 60);
 const auto kOutline = juce::Colour::fromRGBA(24, 24, 26, 40);
 constexpr float kEditorFontSize = 18.0f;
 
-juce::CodeEditorComponent::ColourScheme makePulseColourScheme()
+juce::CodeEditorComponent::ColourScheme makeFabricColourScheme()
 {
     juce::CodeEditorComponent::ColourScheme scheme;
     scheme.set("Error", juce::Colour::fromRGB(216, 120, 104));
@@ -35,14 +35,15 @@ juce::CodeEditorComponent::ColourScheme makePulseColourScheme()
 
 juce::Colour familyColour(const juce::String& family)
 {
-    if (family == "input") return juce::Colour::fromRGB(73, 116, 176);
-    if (family == "analyze") return juce::Colour::fromRGB(72, 133, 108);
-    if (family == "generate") return juce::Colour::fromRGB(174, 110, 49);
-    if (family == "shape") return juce::Colour::fromRGB(148, 92, 123);
-    if (family == "transform") return juce::Colour::fromRGB(118, 95, 168);
-    if (family == "project") return juce::Colour::fromRGB(128, 108, 58);
-    if (family == "output") return juce::Colour::fromRGB(150, 78, 68);
-    return juce::Colour::fromRGB(128, 126, 121);
+    if (family == "input") return juce::Colour::fromRGB(62, 122, 196);
+    if (family == "analyze") return juce::Colour::fromRGB(54, 150, 118);
+    if (family == "generate") return juce::Colour::fromRGB(208, 126, 42);
+    if (family == "shape") return juce::Colour::fromRGB(181, 88, 126);
+    if (family == "transform") return juce::Colour::fromRGB(124, 100, 209);
+    if (family == "memory") return juce::Colour::fromRGB(198, 88, 164);
+    if (family == "project") return juce::Colour::fromRGB(150, 136, 42);
+    if (family == "output") return juce::Colour::fromRGB(186, 82, 64);
+    return juce::Colour::fromRGB(138, 136, 130);
 }
 
 bool isModuleFamily(const juce::String& token)
@@ -64,10 +65,10 @@ bool isGlobalDirective(const juce::String& token)
 
 juce::Colour directiveColour(const juce::String& token)
 {
-    if (token == "patch") return juce::Colour::fromRGB(197, 180, 126);
-    if (token == "scale") return juce::Colour::fromRGB(105, 160, 143);
-    if (token == "tempo") return juce::Colour::fromRGB(164, 124, 188);
-    return juce::Colour::fromRGB(128, 126, 121);
+    if (token == "patch") return juce::Colour::fromRGB(191, 176, 104);
+    if (token == "scale") return juce::Colour::fromRGB(82, 164, 148);
+    if (token == "tempo") return juce::Colour::fromRGB(170, 118, 202);
+    return juce::Colour::fromRGB(138, 136, 130);
 }
 
 void drawPanel(juce::Graphics& g, juce::Rectangle<int> bounds, juce::Colour fill, float radius = 20.0f)
@@ -78,6 +79,16 @@ void drawPanel(juce::Graphics& g, juce::Rectangle<int> bounds, juce::Colour fill
     g.drawRoundedRectangle(bounds.toFloat(), radius, 1.0f);
 }
 
+juce::Colour chipFillColour(juce::Colour base)
+{
+    return base.interpolatedWith(juce::Colours::white, 0.10f).withAlpha(0.24f);
+}
+
+juce::Colour chipTextColour(juce::Colour base)
+{
+    return base.interpolatedWith(juce::Colours::white, 0.28f).withAlpha(0.98f);
+}
+
 struct EditorLayout {
     juce::Rectangle<int> headerPanel;
     juce::Rectangle<int> sectionPanel;
@@ -86,29 +97,41 @@ struct EditorLayout {
     juce::Rectangle<int> diagnosticsPanel;
 };
 
+juce::Rectangle<int> contentUnion(const EditorLayout& layout)
+{
+    auto combined = layout.editorPanel;
+    combined = combined.getUnion(layout.graphPanel);
+    if (!layout.diagnosticsPanel.isEmpty()) {
+        combined = combined.getUnion(layout.diagnosticsPanel);
+    }
+    return combined;
+}
+
 EditorLayout computeLayout(juce::Rectangle<int> bounds, int sectionCount, bool hasDiagnostics)
 {
     EditorLayout layout;
-    auto area = bounds.reduced(16);
+    auto area = bounds.reduced(18);
 
-    layout.headerPanel = area.removeFromTop(64);
+    layout.headerPanel = area.removeFromTop(72);
 
     if (sectionCount > 0) {
         layout.sectionPanel = area.removeFromTop(48 * sectionCount + 12);
         area.removeFromTop(12);
     }
 
-    constexpr int rightColumnWidth = 318;
-    constexpr int columnGap = 14;
-    constexpr int panelGap = 14;
+    constexpr int rightColumnWidth = 304;
+    constexpr int columnGap = 16;
+    constexpr int panelGap = 16;
 
     auto content = area;
     auto rightColumn = content.removeFromRight(juce::jmin(rightColumnWidth, juce::jmax(280, bounds.getWidth() / 3)));
     content.removeFromRight(columnGap);
 
-    const int diagnosticsHeight = hasDiagnostics ? 152 : 110;
-    layout.diagnosticsPanel = rightColumn.removeFromBottom(diagnosticsHeight);
-    rightColumn.removeFromBottom(panelGap);
+    if (hasDiagnostics) {
+        const int diagnosticsHeight = 152;
+        layout.diagnosticsPanel = rightColumn.removeFromBottom(diagnosticsHeight);
+        rightColumn.removeFromBottom(panelGap);
+    }
     layout.graphPanel = rightColumn;
     layout.editorPanel = content;
     return layout;
@@ -127,7 +150,7 @@ void PulsePluginAudioProcessorEditor::ModuleOverlay::paint(juce::Graphics& g)
     const auto visibleBottom = visibleTop + editor.getNumLinesOnScreen() + 1;
     const auto rowHeight = editor.getLineHeight();
     const auto textStart = editor.getCharacterBounds(juce::CodeDocument::Position(owner_.document_, visibleTop, 0)).getX();
-    const auto overlayRight = getWidth() - 10;
+    const auto overlayRight = getWidth() - 22;
 
     struct ModuleBlock {
         int startLine = 0;
@@ -196,15 +219,15 @@ void PulsePluginAudioProcessorEditor::ModuleOverlay::paint(juce::Graphics& g)
 
         const auto lineBounds = editor.getCharacterBounds(juce::CodeDocument::Position(owner_.document_, lineIndex, 0));
         const auto accent = directiveColour(token);
-        auto chipBounds = juce::Rectangle<float>(static_cast<float>(overlayRight - 108),
-            static_cast<float>(lineBounds.getY() + 3),
-            88.0f,
-            18.0f);
-        g.setColour(accent.withAlpha(0.20f));
-        g.fillRoundedRectangle(chipBounds, 9.0f);
-        g.setColour(accent.withAlpha(0.9f));
-        g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
-        g.drawText(token.toUpperCase(), chipBounds.toNearestInt().reduced(8, 1), juce::Justification::centredLeft, true);
+        auto chipBounds = juce::Rectangle<float>(static_cast<float>(overlayRight - 94),
+            static_cast<float>(lineBounds.getY() + 4),
+            76.0f,
+            16.0f);
+        g.setColour(chipFillColour(accent));
+        g.fillRoundedRectangle(chipBounds, 8.0f);
+        g.setColour(chipTextColour(accent));
+        g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+        g.drawText(token.toUpperCase(), chipBounds.toNearestInt().reduced(7, 1), juce::Justification::centredLeft, true);
     }
 
     if (firstConnectLine >= visibleTop && firstConnectLine <= visibleBottom) {
@@ -213,15 +236,15 @@ void PulsePluginAudioProcessorEditor::ModuleOverlay::paint(juce::Graphics& g)
         g.setColour(juce::Colour::fromRGBA(255, 255, 255, 18));
         g.drawLine(static_cast<float>(textStart + 12), static_cast<float>(separatorY), static_cast<float>(overlayRight - 16), static_cast<float>(separatorY), 1.0f);
 
-        auto chipBounds = juce::Rectangle<float>(static_cast<float>(overlayRight - 110),
-            static_cast<float>(separatorY - 12),
-            90.0f,
-            18.0f);
-        g.setColour(kAccent.withAlpha(0.18f));
-        g.fillRoundedRectangle(chipBounds, 9.0f);
-        g.setColour(kAccent.withAlpha(0.88f));
-        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
-        g.drawText("CONNECTIONS", chipBounds.toNearestInt().reduced(8, 1), juce::Justification::centred, true);
+        auto chipBounds = juce::Rectangle<float>(static_cast<float>(overlayRight - 108),
+            static_cast<float>(separatorY - 11),
+            88.0f,
+            16.0f);
+        g.setColour(chipFillColour(kAccent));
+        g.fillRoundedRectangle(chipBounds, 8.0f);
+        g.setColour(chipTextColour(kAccent));
+        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+        g.drawText("CONNECTIONS", chipBounds.toNearestInt().reduced(7, 1), juce::Justification::centred, true);
     }
 
     for (const auto& module : modules) {
@@ -238,7 +261,7 @@ void PulsePluginAudioProcessorEditor::ModuleOverlay::paint(juce::Graphics& g)
         const auto blockBottom = endBounds.getY() + rowHeight;
         const auto accent = familyColour(module.family);
 
-        g.setColour(accent.withAlpha(0.065f));
+        g.setColour(accent.withAlpha(0.05f));
         g.fillRoundedRectangle(static_cast<float>(textStart + 14),
             static_cast<float>(blockTop),
             static_cast<float>(overlayRight - textStart - 28),
@@ -248,23 +271,34 @@ void PulsePluginAudioProcessorEditor::ModuleOverlay::paint(juce::Graphics& g)
         g.setColour(accent.withAlpha(0.40f));
         g.fillRoundedRectangle(static_cast<float>(textStart + 14),
             static_cast<float>(blockTop + 5),
-            4.0f,
+            3.0f,
             static_cast<float>(juce::jmax(14, blockBottom - blockTop - 10)),
             2.0f);
 
         if (module.startLine >= visibleTop && module.startLine <= visibleBottom) {
-            auto chipBounds = juce::Rectangle<float>(static_cast<float>(overlayRight - juce::jmin(210, 88 + (module.kind.length() + module.name.length()) * 6)),
-                static_cast<float>(headerTop + 3),
-                static_cast<float>(juce::jmin(196, 74 + (module.kind.length() + module.name.length()) * 6)),
-                18.0f);
-            g.setColour(accent.withAlpha(0.16f));
-            g.fillRoundedRectangle(chipBounds, 9.0f);
-            g.setColour(accent.withAlpha(0.82f));
-            g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+            auto chipWidth = static_cast<float>(juce::jmin(184, 66 + (module.kind.length() + module.name.length()) * 5));
+            auto chipBounds = juce::Rectangle<float>(static_cast<float>(overlayRight) - chipWidth - 8.0f,
+                static_cast<float>(headerTop + 4),
+                chipWidth,
+                16.0f);
+            g.setColour(chipFillColour(accent));
+            g.fillRoundedRectangle(chipBounds, 8.0f);
+            g.setColour(chipTextColour(accent));
+            g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
             const auto chipText = module.name.isNotEmpty()
                 ? module.family + " / " + module.kind + " / " + module.name
                 : module.family + " / " + module.kind;
-            g.drawText(chipText, chipBounds.toNearestInt().reduced(8, 1), juce::Justification::centredLeft, true);
+            juce::String detail;
+            for (const auto& node : owner_.graphSnapshot_.nodes) {
+                if (node.name == module.name && node.detail.isNotEmpty()) {
+                    detail = node.detail;
+                    break;
+                }
+            }
+            g.drawText(detail.isNotEmpty() ? chipText + " / " + detail : chipText,
+                chipBounds.toNearestInt().reduced(7, 1),
+                juce::Justification::centredLeft,
+                true);
         }
     }
 }
@@ -340,6 +374,159 @@ void PulsePluginAudioProcessorEditor::GraphPreviewComponent::setSnapshot(PulsePl
     repaint();
 }
 
+void PulsePluginAudioProcessorEditor::IoVisualiserComponent::setSnapshot(PulsePluginAudioProcessor::IoSnapshot snapshot)
+{
+    snapshot_ = std::move(snapshot);
+    repaint();
+}
+
+void PulsePluginAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
+{
+    g.fillAll(juce::Colours::transparentBlack);
+
+    auto bounds = getLocalBounds().reduced(8);
+    drawPanel(g, bounds, kPanelStrong, 24.0f);
+    bounds.reduce(20, 18);
+
+    auto header = bounds.removeFromTop(28);
+    g.setColour(kMuted);
+    g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
+    g.drawText("LIVE I/O", header.removeFromLeft(100), juce::Justification::centredLeft, true);
+    g.setFont(juce::Font(juce::FontOptions(12.0f)));
+    g.drawText("Press Tab to return to the patch.", header, juce::Justification::centredRight, true);
+
+    bounds.removeFromTop(8);
+    auto left = bounds.removeFromLeft(bounds.getWidth() / 2);
+    bounds.removeFromLeft(14);
+    auto right = bounds;
+
+    const auto drawLane = [&g](juce::Rectangle<int> laneBounds,
+                               const juce::String& title,
+                               int totalCount,
+                               int activeCount,
+                               const std::array<std::uint8_t, 32>& history,
+                               const std::array<std::uint8_t, 128>& activeNotes,
+                               const std::vector<PulsePluginAudioProcessor::IoEventSummary>& events,
+                               juce::Colour accent) {
+        drawPanel(g, laneBounds, juce::Colour::fromRGBA(255, 255, 255, 112), 20.0f);
+        auto area = laneBounds.reduced(16, 14);
+
+        auto laneHeader = area.removeFromTop(26);
+        g.setColour(accent);
+        g.setFont(juce::Font(juce::FontOptions(13.0f, juce::Font::bold)));
+        g.drawText(title, laneHeader.removeFromLeft(120), juce::Justification::centredLeft, true);
+        g.setColour(kMuted);
+        g.setFont(juce::Font(juce::FontOptions(12.0f)));
+        g.drawText(juce::String(totalCount) + " events", laneHeader, juce::Justification::centredRight, true);
+
+        area.removeFromTop(4);
+
+        auto summary = area.removeFromTop(26);
+        auto summaryLeft = summary.removeFromLeft(summary.getWidth() / 2);
+        auto chip = [](juce::Graphics& cg, juce::Rectangle<int> chipBounds, juce::String text, juce::Colour base) {
+            cg.setColour(chipFillColour(base));
+            cg.fillRoundedRectangle(chipBounds.toFloat(), 9.0f);
+            cg.setColour(chipTextColour(base));
+            cg.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+            cg.drawText(text, chipBounds.reduced(8, 2), juce::Justification::centredLeft, true);
+        };
+        chip(g, summaryLeft.removeFromLeft(98), "Active " + juce::String(activeCount), accent);
+        chip(g, summary.removeFromLeft(104), "Now " + juce::String(totalCount), accent.brighter(0.08f));
+
+        area.removeFromTop(6);
+
+        auto meterBounds = area.removeFromTop(76);
+        drawPanel(g, meterBounds, juce::Colour::fromRGBA(255, 255, 255, 70), 16.0f);
+        auto meter = meterBounds.reduced(12, 10);
+        auto meterHeader = meter.removeFromTop(16);
+        g.setColour(kMuted);
+        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.drawText("Activity", meterHeader, juce::Justification::centredLeft, true);
+        auto chart = meter.reduced(0, 4);
+        const auto maxValue = std::max<std::uint8_t>(1, *std::max_element(history.begin(), history.end()));
+        const auto barWidth = juce::jmax(3, chart.getWidth() / static_cast<int>(history.size()));
+        for (std::size_t index = 0; index < history.size(); ++index) {
+            const auto value = history[index];
+            const auto height = static_cast<int>(std::round((static_cast<float>(value) / static_cast<float>(maxValue)) * static_cast<float>(chart.getHeight())));
+            auto bar = juce::Rectangle<int>(chart.getX() + static_cast<int>(index) * barWidth,
+                chart.getBottom() - height,
+                juce::jmax(2, barWidth - 1),
+                juce::jmax(2, height));
+            g.setColour(accent.withAlpha(index + 1 == history.size() ? 0.95f : 0.35f + (0.45f * static_cast<float>(index) / static_cast<float>(history.size()))));
+            g.fillRoundedRectangle(bar.toFloat(), 2.0f);
+        }
+
+        area.removeFromTop(10);
+
+        auto keyboardBounds = area.removeFromTop(92);
+        drawPanel(g, keyboardBounds, juce::Colour::fromRGBA(255, 255, 255, 70), 16.0f);
+        auto keyboard = keyboardBounds.reduced(12, 10);
+        auto keyboardHeader = keyboard.removeFromTop(16);
+        g.setColour(kMuted);
+        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.drawText("Active notes", keyboardHeader, juce::Justification::centredLeft, true);
+        auto strip = keyboard.reduced(0, 6);
+        const auto keyWidth = static_cast<float>(strip.getWidth()) / 128.0f;
+        for (int note = 0; note < 128; ++note) {
+            const bool isBlack = juce::MidiMessage::isMidiNoteBlack(note);
+            auto key = juce::Rectangle<float>(strip.getX() + (static_cast<float>(note) * keyWidth),
+                static_cast<float>(strip.getY()),
+                std::max(1.0f, keyWidth - 0.5f),
+                static_cast<float>(strip.getHeight()));
+            g.setColour(isBlack ? juce::Colour::fromRGBA(30, 34, 38, 130) : juce::Colour::fromRGBA(255, 255, 255, 55));
+            g.fillRoundedRectangle(key, 1.5f);
+            const auto velocity = activeNotes[static_cast<std::size_t>(note)];
+            if (velocity > 0) {
+                const auto alpha = 0.35f + (0.55f * (static_cast<float>(velocity) / 127.0f));
+                g.setColour(accent.withAlpha(alpha));
+                g.fillRoundedRectangle(key.reduced(0.2f, 4.0f), 1.5f);
+            }
+        }
+        for (int note = 0; note < 128; note += 12) {
+            const auto x = strip.getX() + (static_cast<float>(note) * keyWidth);
+            g.setColour(juce::Colour::fromRGBA(255, 255, 255, 28));
+            g.drawVerticalLine(static_cast<int>(std::round(x)), static_cast<float>(strip.getY()), static_cast<float>(strip.getBottom()));
+        }
+
+        area.removeFromTop(10);
+
+        if (events.empty()) {
+            g.setColour(kMuted.withAlpha(0.85f));
+            g.setFont(juce::Font(juce::FontOptions(14.0f)));
+            g.drawFittedText("No activity yet.", area, juce::Justification::centred, 1);
+            return;
+        }
+
+        auto eventHeader = area.removeFromTop(16);
+        g.setColour(kMuted);
+        g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+        g.drawText("Recent events", eventHeader, juce::Justification::centredLeft, true);
+        area.removeFromTop(4);
+
+        constexpr int rowHeight = 24;
+        for (std::size_t index = 0; index < events.size(); ++index) {
+            auto row = area.removeFromTop(rowHeight);
+            if (row.isEmpty()) {
+                break;
+            }
+
+            const auto& event = events[index];
+            auto badge = row.removeFromLeft(10).reduced(0, 4);
+            g.setColour(event.isNoteOn ? accent.brighter(0.1f)
+                         : event.isNoteOff ? accent.darker(0.15f)
+                                           : accent.withAlpha(0.7f));
+            g.fillRoundedRectangle(badge.toFloat(), 3.0f);
+
+            g.setColour(kInk);
+            g.setFont(juce::Font(juce::FontOptions(15.0f)));
+            g.drawText(event.text, row.reduced(10, 0), juce::Justification::centredLeft, true);
+        }
+    };
+
+    drawLane(left, "Incoming", snapshot_.incomingCount, snapshot_.incomingActiveCount, snapshot_.incomingHistory, snapshot_.incomingActive, snapshot_.incoming, familyColour("input"));
+    drawLane(right, "Outgoing", snapshot_.outgoingCount, snapshot_.outgoingActiveCount, snapshot_.outgoingHistory, snapshot_.outgoingActive, snapshot_.outgoing, familyColour("output"));
+}
+
 void PulsePluginAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colours::transparentBlack);
@@ -355,8 +542,8 @@ void PulsePluginAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphic
         return;
     }
 
-    const int nodeWidth = juce::jmin(196, bounds.getWidth() - 32);
-    const int nodeHeight = 52;
+    const int nodeWidth = juce::jmin(204, bounds.getWidth() - 32);
+    const int nodeHeight = 60;
     const int spacing = 20;
     juce::HashMap<juce::String, juce::Rectangle<int>> nodeBounds;
 
@@ -397,7 +584,21 @@ void PulsePluginAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphic
         g.drawText(node.name, text.removeFromTop(22), juce::Justification::centredLeft, true);
         g.setColour(kMuted);
         g.setFont(juce::Font(juce::FontOptions(12.5f)));
-        g.drawText(node.family + " / " + node.kind, text, juce::Justification::centredLeft, true);
+        g.drawText(node.family + " / " + node.kind, text.removeFromTop(16), juce::Justification::centredLeft, true);
+
+        if (node.detail.isNotEmpty()) {
+            const auto chipWidth = juce::jmin(132, 42 + static_cast<int>(node.detail.length()) * 7);
+            auto chip = juce::Rectangle<float>(static_cast<float>(text.getX()),
+                static_cast<float>(text.getY() + 1),
+                static_cast<float>(chipWidth),
+                16.0f);
+            const auto chipColour = familyColour(node.family);
+            g.setColour(chipFillColour(chipColour));
+            g.fillRoundedRectangle(chip, 8.0f);
+            g.setColour(chipTextColour(chipColour));
+            g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+            g.drawText(node.detail, chip.toNearestInt().reduced(7, 1), juce::Justification::centredLeft, true);
+        }
     }
 }
 
@@ -406,14 +607,33 @@ PulsePluginAudioProcessorEditor::PulsePluginAudioProcessorEditor(PulsePluginAudi
     , processor_(audioProcessor)
     , tokeniser_(std::make_unique<juce::CPlusPlusCodeTokeniser>())
 {
-    titleLabel_.setText("Pulse", juce::dontSendNotification);
+    titleLabel_.setText("Fabric", juce::dontSendNotification);
     titleLabel_.setColour(juce::Label::textColourId, kInk);
     titleLabel_.setFont(juce::Font(juce::FontOptions(28.0f, juce::Font::bold)));
     addAndMakeVisible(titleLabel_);
 
-    statusLabel_.setColour(juce::Label::textColourId, kMuted);
-    statusLabel_.setJustificationType(juce::Justification::centredRight);
-    addAndMakeVisible(statusLabel_);
+    stateSummaryLabel_.setColour(juce::Label::textColourId, kMuted.withAlpha(0.95f));
+    stateSummaryLabel_.setJustificationType(juce::Justification::centredRight);
+    stateSummaryLabel_.setFont(juce::Font(juce::FontOptions(12.0f)));
+    addAndMakeVisible(stateSummaryLabel_);
+
+    loadButton_.onClick = [this] { loadPatchFromFile(); };
+    loadButton_.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGBA(255, 255, 255, 120));
+    loadButton_.setColour(juce::TextButton::textColourOffId, kInk);
+    addAndMakeVisible(loadButton_);
+
+    saveButton_.onClick = [this] { savePatchToFile(); };
+    saveButton_.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGBA(255, 255, 255, 120));
+    saveButton_.setColour(juce::TextButton::textColourOffId, kInk);
+    addAndMakeVisible(saveButton_);
+
+    clockModeButton_.onClick = [this] {
+        processor_.setSyncToTransportEnabled(!processor_.isSyncToTransportEnabled());
+        refreshFromProcessor();
+    };
+    clockModeButton_.setColour(juce::TextButton::buttonColourId, juce::Colour::fromRGBA(255, 255, 255, 120));
+    clockModeButton_.setColour(juce::TextButton::textColourOffId, kInk);
+    addAndMakeVisible(clockModeButton_);
 
     compileButton_.onClick = [this] { requestCompileNow(); };
     compileButton_.setColour(juce::TextButton::buttonColourId, kInk);
@@ -427,7 +647,7 @@ PulsePluginAudioProcessorEditor::PulsePluginAudioProcessorEditor(PulsePluginAudi
     editor_->setScrollbarThickness(12);
     editor_->setLineNumbersShown(true);
     editor_->setFont(juce::Font(juce::FontOptions("Menlo", kEditorFontSize, juce::Font::plain)));
-    editor_->setColourScheme(makePulseColourScheme());
+    editor_->setColourScheme(makeFabricColourScheme());
     editor_->setColour(juce::CodeEditorComponent::backgroundColourId, kCodeBg);
     editor_->setColour(juce::CodeEditorComponent::defaultTextColourId, kCodeText);
     editor_->setColour(juce::CodeEditorComponent::highlightColourId, kAccentSoft);
@@ -451,10 +671,22 @@ PulsePluginAudioProcessorEditor::PulsePluginAudioProcessorEditor(PulsePluginAudi
     addAndMakeVisible(diagnosticsSummary_);
 
     addAndMakeVisible(graphPreview_);
+    addAndMakeVisible(ioVisualiser_);
     addAndMakeVisible(sectionPulseOverlay_);
     sectionPulseOverlay_.setInterceptsMouseClicks(false, false);
+    ioVisualiser_.setVisible(false);
+
+    setWantsKeyboardFocus(true);
+    addKeyListener(this);
+    editor_->addKeyListener(this);
+    diagnosticsList_.addKeyListener(this);
+    compileButton_.addKeyListener(this);
+    clockModeButton_.addKeyListener(this);
+    loadButton_.addKeyListener(this);
+    saveButton_.addKeyListener(this);
 
     refreshFromProcessor();
+    applyViewMode();
     setSize(1110, 690);
     startTimer(120);
 }
@@ -473,25 +705,47 @@ void PulsePluginAudioProcessorEditor::paint(juce::Graphics& g)
     if (!layout.sectionPanel.isEmpty()) {
         drawPanel(g, layout.sectionPanel, juce::Colour::fromRGBA(255, 255, 255, 70), 20.0f);
     }
-    drawPanel(g, layout.editorPanel, kCodeBg, 24.0f);
-    drawPanel(g, layout.graphPanel, kPanelStrong, 24.0f);
-    drawPanel(g, layout.diagnosticsPanel, juce::Colour::fromRGBA(255, 255, 255, 110), 20.0f);
+    if (viewMode_ == ViewMode::io) {
+        drawPanel(g, contentUnion(layout), juce::Colour::fromRGBA(255, 255, 255, 70), 24.0f);
+    } else {
+        drawPanel(g, layout.editorPanel, kCodeBg, 24.0f);
+        drawPanel(g, layout.graphPanel, kPanelStrong, 24.0f);
+        if (!layout.diagnosticsPanel.isEmpty()) {
+            drawPanel(g, layout.diagnosticsPanel, juce::Colour::fromRGBA(255, 255, 255, 110), 20.0f);
+        }
 
-    g.setColour(kMuted);
-    g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
-    g.drawText("PATCH", layout.editorPanel.withTrimmedBottom(layout.editorPanel.getHeight() - 26).reduced(16, 0), juce::Justification::centredLeft, true);
-    g.drawText("FLOW", layout.graphPanel.withTrimmedBottom(layout.graphPanel.getHeight() - 26).reduced(16, 0), juce::Justification::centredLeft, true);
-    g.drawText("DIAGNOSTICS", layout.diagnosticsPanel.withTrimmedBottom(layout.diagnosticsPanel.getHeight() - 24).reduced(16, 0), juce::Justification::centredLeft, true);
+        g.setColour(kMuted);
+        g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
+        g.drawText("PATCH", layout.editorPanel.withTrimmedBottom(layout.editorPanel.getHeight() - 26).reduced(16, 0), juce::Justification::centredLeft, true);
+        g.drawText("FLOW", layout.graphPanel.withTrimmedBottom(layout.graphPanel.getHeight() - 26).reduced(16, 0), juce::Justification::centredLeft, true);
+        if (!layout.diagnosticsPanel.isEmpty()) {
+            g.drawText("DIAGNOSTICS", layout.diagnosticsPanel.withTrimmedBottom(layout.diagnosticsPanel.getHeight() - 24).reduced(16, 0), juce::Justification::centredLeft, true);
+        }
+    }
 }
 
 void PulsePluginAudioProcessorEditor::resized()
 {
     const auto layout = computeLayout(getLocalBounds(), static_cast<int>(sectionControls_.size()), !diagnostics_.empty());
 
-    auto header = layout.headerPanel.reduced(18, 12);
-    titleLabel_.setBounds(header.removeFromLeft(220));
-    compileButton_.setBounds(header.removeFromRight(146));
-    statusLabel_.setBounds(header.removeFromRight(260));
+    auto header = layout.headerPanel.reduced(22, 14);
+    titleLabel_.setBounds(header.removeFromLeft(164));
+
+    auto controls = header.removeFromRight(490);
+    compileButton_.setBounds(controls.removeFromRight(152));
+    controls.removeFromRight(10);
+    clockModeButton_.setBounds(controls.removeFromRight(146));
+    controls.removeFromRight(8);
+    saveButton_.setBounds(controls.removeFromRight(74));
+    controls.removeFromRight(8);
+    loadButton_.setBounds(controls.removeFromRight(74));
+
+    if (stateSummaryLabel_.isVisible()) {
+        auto summary = header.reduced(10, 8);
+        stateSummaryLabel_.setBounds(summary);
+    } else {
+        stateSummaryLabel_.setBounds({});
+    }
 
     auto sectionArea = layout.sectionPanel.reduced(16, 6);
     if (!sectionControls_.empty()) {
@@ -524,19 +778,26 @@ void PulsePluginAudioProcessorEditor::resized()
         }
     }
 
-    auto editorBounds = layout.editorPanel.reduced(18, 18);
-    editorBounds.removeFromTop(28);
+    auto editorBounds = layout.editorPanel.reduced(20, 20);
+    editorBounds.removeFromTop(30);
     editor_->setBounds(editorBounds);
     moduleOverlay_.setBounds(editor_->getLocalBounds());
     diagnosticOverlay_.setBounds(editor_->getLocalBounds());
-    graphPreview_.setBounds(layout.graphPanel.reduced(10, 28));
+    graphPreview_.setBounds(layout.graphPanel.reduced(12, 30));
+    ioVisualiser_.setBounds(contentUnion(layout).reduced(10, 10));
 
-    auto diagnosticsContent = layout.diagnosticsPanel.reduced(12, 26);
-    diagnosticsContent.removeFromTop(22);
-    auto listArea = diagnosticsContent.removeFromTop(diagnostics_.empty() ? 0 : 70);
-    diagnosticsList_.setBounds(listArea);
-    diagnosticsSummary_.setBounds(diagnosticsContent.withTrimmedTop(diagnostics_.empty() ? 0 : 8));
+    if (!layout.diagnosticsPanel.isEmpty()) {
+        auto diagnosticsContent = layout.diagnosticsPanel.reduced(12, 26);
+        diagnosticsContent.removeFromTop(22);
+        auto listArea = diagnosticsContent.removeFromTop(70);
+        diagnosticsList_.setBounds(listArea);
+        diagnosticsSummary_.setBounds(diagnosticsContent.withTrimmedTop(8));
+    } else {
+        diagnosticsList_.setBounds({});
+        diagnosticsSummary_.setBounds({});
+    }
     sectionPulseOverlay_.setBounds(getLocalBounds());
+    applyViewMode();
 }
 
 void PulsePluginAudioProcessorEditor::timerCallback()
@@ -551,6 +812,11 @@ void PulsePluginAudioProcessorEditor::timerCallback()
     if (revision != seenRevision_) {
         refreshFromProcessor();
     } else {
+        graphSnapshot_ = processor_.getGraphSnapshot();
+        ioSnapshot_ = processor_.getIoSnapshot();
+        updateStateTracking(graphSnapshot_);
+        graphPreview_.setSnapshot(graphSnapshot_);
+        ioVisualiser_.setSnapshot(ioSnapshot_);
         updateSectionButtonStates();
         bool needsRepaint = false;
         for (auto& amount : pulseAmounts_) {
@@ -564,9 +830,6 @@ void PulsePluginAudioProcessorEditor::timerCallback()
         if (needsRepaint) {
             sectionPulseOverlay_.repaint();
         }
-        if (processor_.isCompileInProgress()) {
-            statusLabel_.setText("Compiling...", juce::dontSendNotification);
-        }
     }
 }
 
@@ -574,7 +837,6 @@ void PulsePluginAudioProcessorEditor::codeDocumentTextInserted(const juce::Strin
 {
     lastEditTimeMs_ = juce::Time::getMillisecondCounterHiRes();
     pendingDebouncedCompile_ = true;
-    statusLabel_.setText("Waiting to recompile...", juce::dontSendNotification);
     moduleOverlay_.repaint();
 }
 
@@ -582,8 +844,27 @@ void PulsePluginAudioProcessorEditor::codeDocumentTextDeleted(int, int)
 {
     lastEditTimeMs_ = juce::Time::getMillisecondCounterHiRes();
     pendingDebouncedCompile_ = true;
-    statusLabel_.setText("Waiting to recompile...", juce::dontSendNotification);
     moduleOverlay_.repaint();
+}
+
+bool PulsePluginAudioProcessorEditor::keyPressed(const juce::KeyPress& key)
+{
+    if (key.getKeyCode() == juce::KeyPress::tabKey) {
+        toggleViewMode();
+        return true;
+    }
+
+    return AudioProcessorEditor::keyPressed(key);
+}
+
+bool PulsePluginAudioProcessorEditor::keyPressed(const juce::KeyPress& key, juce::Component*)
+{
+    if (key.getKeyCode() == juce::KeyPress::tabKey) {
+        toggleViewMode();
+        return true;
+    }
+
+    return false;
 }
 
 int PulsePluginAudioProcessorEditor::getNumRows()
@@ -634,29 +915,96 @@ void PulsePluginAudioProcessorEditor::refreshFromProcessor()
         document_.replaceAllContent(latestScript);
     }
     diagnostics_ = processor_.getDiagnostics();
+    diagnosticsList_.setVisible(!diagnostics_.empty());
+    diagnosticsSummary_.setVisible(!diagnostics_.empty());
+    graphSnapshot_ = processor_.getGraphSnapshot();
+    ioSnapshot_ = processor_.getIoSnapshot();
+    updateStateTracking(graphSnapshot_);
     sectionControls_ = processor_.getSectionControls();
     rebuildSectionButtons();
     updateSectionButtonStates();
     diagnosticsList_.updateContent();
     diagnosticsList_.repaint();
-    diagnosticsSummary_.setText(processor_.getDiagnosticsText(), juce::dontSendNotification);
-    graphPreview_.setSnapshot(processor_.getGraphSnapshot());
+    diagnosticsSummary_.setText(diagnostics_.empty() ? juce::String() : processor_.getDiagnosticsText(), juce::dontSendNotification);
+    graphPreview_.setSnapshot(graphSnapshot_);
+    ioVisualiser_.setSnapshot(ioSnapshot_);
     moduleOverlay_.repaint();
     diagnosticOverlay_.repaint();
 
-    if (processor_.isCompileInProgress()) {
-        statusLabel_.setText("Compiling...", juce::dontSendNotification);
-    } else if (diagnostics_.empty()) {
-        statusLabel_.setText("Compiled successfully", juce::dontSendNotification);
-    } else {
-        statusLabel_.setText("Diagnostics: " + juce::String(static_cast<int>(diagnostics_.size())), juce::dontSendNotification);
-    }
+    const auto summaryText = stateSummaryText();
+    stateSummaryLabel_.setVisible(summaryText.isNotEmpty());
+    stateSummaryLabel_.setText(summaryText, juce::dontSendNotification);
+    clockModeButton_.setButtonText(processor_.isSyncToTransportEnabled() ? "Logic Sync" : "Free Clock");
 
     if (!diagnostics_.empty()) {
         diagnosticsList_.selectRow(0);
     }
 
     resized();
+}
+
+void PulsePluginAudioProcessorEditor::applyViewMode()
+{
+    const auto showingEditor = viewMode_ == ViewMode::editor;
+    if (editor_ != nullptr) {
+        editor_->setVisible(showingEditor);
+    }
+    graphPreview_.setVisible(showingEditor);
+    diagnosticsList_.setVisible(showingEditor && !diagnostics_.empty());
+    diagnosticsSummary_.setVisible(showingEditor && !diagnostics_.empty());
+    ioVisualiser_.setVisible(!showingEditor);
+}
+
+void PulsePluginAudioProcessorEditor::toggleViewMode()
+{
+    viewMode_ = (viewMode_ == ViewMode::editor) ? ViewMode::io : ViewMode::editor;
+    applyViewMode();
+    repaint();
+}
+
+void PulsePluginAudioProcessorEditor::loadPatchFromFile()
+{
+    auto startFile = lastPatchFile_.exists() ? lastPatchFile_ : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory);
+    fileChooser_ = std::make_unique<juce::FileChooser>("Load Fabric patch", startFile, "*.pulse");
+    fileChooser_->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+        [this](const juce::FileChooser& chooser) {
+            const auto file = chooser.getResult();
+            if (!file.existsAsFile()) {
+                return;
+            }
+
+            const auto content = file.loadFileAsString();
+            if (content.isEmpty()) {
+                return;
+            }
+
+            lastPatchFile_ = file;
+            document_.replaceAllContent(content);
+            pendingDebouncedCompile_ = false;
+            processor_.requestCompile(content);
+        });
+}
+
+void PulsePluginAudioProcessorEditor::savePatchToFile()
+{
+    auto startFile = lastPatchFile_.exists()
+        ? lastPatchFile_
+        : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("patch.pulse");
+    fileChooser_ = std::make_unique<juce::FileChooser>("Save Fabric patch", startFile, "*.pulse");
+    fileChooser_->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this](const juce::FileChooser& chooser) {
+            auto file = chooser.getResult();
+            if (file == juce::File()) {
+                return;
+            }
+            if (!file.hasFileExtension(".pulse")) {
+                file = file.withFileExtension(".pulse");
+            }
+
+            if (file.replaceWithText(document_.getAllContent())) {
+                lastPatchFile_ = file;
+            }
+        });
 }
 
 void PulsePluginAudioProcessorEditor::jumpToDiagnostic(int row)
@@ -775,4 +1123,42 @@ double PulsePluginAudioProcessorEditor::pulseAmountForModule(int moduleIndex) co
     }
 
     return pulseAmounts_[static_cast<std::size_t>(moduleIndex)];
+}
+
+void PulsePluginAudioProcessorEditor::updateStateTracking(const PulsePluginAudioProcessor::GraphSnapshot& snapshot)
+{
+    for (const auto& node : snapshot.nodes) {
+        if (node.detail.isEmpty()) {
+            continue;
+        }
+
+        const auto previous = lastNodeDetails_.find(node.name);
+        if (previous == lastNodeDetails_.end() || previous->second != node.detail) {
+            auto& history = nodeStateHistory_[node.name];
+            if (history.isEmpty() || history[history.size() - 1] != node.detail) {
+                history.add(node.detail);
+                while (history.size() > 4) {
+                    history.remove(0);
+                }
+            }
+            lastNodeDetails_[node.name] = node.detail;
+        }
+    }
+}
+
+juce::String PulsePluginAudioProcessorEditor::stateSummaryText() const
+{
+    juce::StringArray parts;
+    for (const auto& node : graphSnapshot_.nodes) {
+        if (node.detail.isEmpty()) {
+            continue;
+        }
+        juce::String part = node.name + ": " + node.detail;
+        if (const auto history = nodeStateHistory_.find(node.name); history != nodeStateHistory_.end() && history->second.size() > 1) {
+            juce::StringArray tail = history->second;
+            part << "  [" << tail.joinIntoString(" > ") << "]";
+        }
+        parts.add(part);
+    }
+    return parts.isEmpty() ? juce::String() : parts.joinIntoString("   ");
 }

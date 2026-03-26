@@ -1,6 +1,6 @@
-# Pulse
+# Fabric
 
-Pulse is a small, human-readable language for building modular musical systems inside a JUCE-based Audio Unit MIDI Effect plugin.
+Fabric is a small, human-readable language for building modular musical systems inside a JUCE-based Audio Unit MIDI Effect plugin.
 
 It is not just a MIDI scripting language.
 
@@ -16,7 +16,7 @@ The goal is to make strange and powerful musical systems readable as plain text.
 
 ## Design Goals
 
-Pulse is designed around six goals:
+Fabric is designed around six goals:
 
 1. Be readable by musicians, not just programmers.
 2. Run safely inside a real-time JUCE plugin.
@@ -47,11 +47,11 @@ That means the language must support modules that:
 
 This gives the language a modular-synth-like spirit while still living inside a MIDI plugin.
 
-## What Pulse Is
+## What Fabric Is
 
-Pulse is a graph language.
+Fabric is a graph language.
 
-A Pulse patch is a set of named modules connected by explicit signal routes.
+A Fabric patch is a set of named modules connected by explicit signal routes.
 
 Modules fall into a small number of families:
 
@@ -145,7 +145,7 @@ This is the level of readability the language should aim for.
 
 ## Signal Types
 
-Pulse should have five core signal types.
+Fabric should have five core signal types.
 
 ### `midi`
 
@@ -541,7 +541,7 @@ end
 
 ## Time
 
-Pulse should prefer musical time, but allow milliseconds where needed.
+Fabric should prefer musical time, but allow milliseconds where needed.
 
 Supported forms:
 
@@ -684,7 +684,7 @@ end
 
 ## 7. Bitwise MIDI Operations
 
-Pulse should allow low-level operations, but keep them readable and scoped.
+Fabric should allow low-level operations, but keep them readable and scoped.
 
 Example:
 
@@ -796,7 +796,7 @@ This requires:
 
 ## 12. Topological Pitch Space
 
-This is an advanced idea and probably not v1, but Pulse should leave room for it.
+This is an advanced idea and probably not v1, but Fabric should leave room for it.
 
 Concept:
 
@@ -861,7 +861,7 @@ generate collapse engine1
 end
 ```
 
-This means Pulse should allow a readable rule syntax for some advanced generators.
+This means Fabric should allow a readable rule syntax for some advanced generators.
 
 ## 16. Endless Cut-Up Sequencer
 
@@ -906,7 +906,7 @@ This is a major reason `shape` should be a top-level family.
 
 ## What Should Be In Version 1
 
-Pulse should start small, but not too small.
+Fabric should start small, but not too small.
 
 The best v1 is the smallest language that still expresses your core practical ideas.
 
@@ -1041,7 +1041,7 @@ Cannot connect `metro` to `transpose1`.
 
 ## Compile Model
 
-Pulse should be compiled before playback.
+Fabric should be compiled before playback.
 
 Do not parse or interpret script text inside the audio callback.
 
@@ -1062,7 +1062,7 @@ Inside a JUCE MIDI effect plugin, the architecture could look like:
 - `PulseLexer`
 - `PulseParser`
 - `PulseAst`
-- `PulseCompiler`
+- `FabricCompiler`
 - `CompiledPatch`
 - `RuntimeNode`
 - `EventBuffer`
@@ -1082,7 +1082,7 @@ For each `processBlock`:
 
 ## Real-Time Safety Rules
 
-Pulse should be strict here:
+Fabric should be strict here:
 
 - no dynamic allocation in `processBlock`
 - no file IO in `processBlock`
@@ -1141,7 +1141,7 @@ And it is implementable inside JUCE:
 
 ## Final Recommendation
 
-Build Pulse as a small modular musical language, not as a general programming language and not as a narrow MIDI macro system.
+Build Fabric as a small modular musical language, not as a general programming language and not as a narrow MIDI macro system.
 
 The identity should be:
 

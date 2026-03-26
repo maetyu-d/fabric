@@ -24,6 +24,7 @@ public:
     [[nodiscard]] std::optional<int> currentSectionIndex(const std::string& moduleName) const;
     [[nodiscard]] std::optional<double> currentSectionPhase(const std::string& moduleName) const;
     [[nodiscard]] std::optional<std::uint64_t> sectionAdvanceCount(const std::string& moduleName) const;
+    [[nodiscard]] std::optional<std::string> activeStateLabel(const std::string& moduleName) const;
 
 private:
     Parser parser_;

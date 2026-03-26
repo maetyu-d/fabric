@@ -4,6 +4,7 @@
 #include "pulse/JuceIntegration.hpp"
 
 #include <atomic>
+#include <array>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -12,6 +13,25 @@
 class PulsePluginAudioProcessor final : public juce::AudioProcessor
 {
 public:
+    struct IoEventSummary {
+        juce::String text;
+        bool isNoteOn = false;
+        bool isNoteOff = false;
+    };
+
+    struct IoSnapshot {
+        std::vector<IoEventSummary> incoming;
+        std::vector<IoEventSummary> outgoing;
+        int incomingCount = 0;
+        int outgoingCount = 0;
+        int incomingActiveCount = 0;
+        int outgoingActiveCount = 0;
+        std::array<std::uint8_t, 128> incomingActive {};
+        std::array<std::uint8_t, 128> outgoingActive {};
+        std::array<std::uint8_t, 32> incomingHistory {};
+        std::array<std::uint8_t, 32> outgoingHistory {};
+    };
+
     struct UiDiagnostic {
         juce::String message;
         int line = 0;
@@ -23,6 +43,7 @@ public:
         juce::String name;
         juce::String family;
         juce::String kind;
+        juce::String detail;
     };
 
     struct GraphConnection {
@@ -79,6 +100,9 @@ public:
     std::vector<UiDiagnostic> getDiagnostics() const;
     GraphSnapshot getGraphSnapshot() const;
     std::vector<SectionControlSnapshot> getSectionControls() const;
+    IoSnapshot getIoSnapshot() const;
+    bool isSyncToTransportEnabled() const;
+    void setSyncToTransportEnabled(bool enabled);
     std::uint64_t getUiRevision() const;
     bool isCompileInProgress() const;
     void requestSectionRecall(const juce::String& moduleName, int sectionIndex);
@@ -113,8 +137,14 @@ private:
     static juce::String diagnosticsToText(const std::vector<UiDiagnostic>& diagnostics);
     static std::vector<pulse::Event> midiBufferToEvents(const juce::MidiBuffer& midi);
     static void eventsToMidiBuffer(const std::vector<pulse::Event>& events, double sampleRate, int blockSize, juce::MidiBuffer& midi);
+    static IoEventSummary summariseEvent(const pulse::Event& event);
+    static IoSnapshot buildIoSnapshot(const std::vector<pulse::Event>& incoming, const std::vector<pulse::Event>& outgoing);
+    static void updateActiveNotes(std::array<std::uint8_t, 128>& activeNotes, const std::vector<pulse::Event>& events);
+    static void pushHistory(std::array<std::uint8_t, 32>& history, int count);
+    static int countActiveNotes(const std::array<std::uint8_t, 128>& activeNotes);
 
     juce::CriticalSection uiStateLock_;
+    mutable juce::SpinLock ioSnapshotLock_;
     juce::ThreadPool compilePool_ { 1 };
     std::shared_ptr<EngineState> activeState_;
     juce::String scriptText_;
@@ -133,6 +163,12 @@ private:
     std::unordered_map<juce::String, int> activeSectionIndices_;
     std::unordered_map<juce::String, double> activeSectionPhases_;
     std::unordered_map<juce::String, std::uint64_t> sectionAdvanceCounts_;
+    std::atomic<bool> syncToTransport_ { true };
+    std::array<std::uint8_t, 128> incomingActiveNotes_ {};
+    std::array<std::uint8_t, 128> outgoingActiveNotes_ {};
+    std::array<std::uint8_t, 32> incomingHistory_ {};
+    std::array<std::uint8_t, 32> outgoingHistory_ {};
+    IoSnapshot ioSnapshot_;
     std::optional<int> currentProgramIndex_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PulsePluginAudioProcessor)

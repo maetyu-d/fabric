@@ -75,4 +75,10 @@ std::optional<std::uint64_t> Engine::sectionAdvanceCount(const std::string& modu
     return runtime_->sectionAdvanceCount(moduleName);
 }
 
+std::optional<std::string> Engine::activeStateLabel(const std::string& moduleName) const
+{
+    if (!runtime_) return std::nullopt;
+    return runtime_->activeStateLabel(moduleName);
+}
+
 } // namespace pulse

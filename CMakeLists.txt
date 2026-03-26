@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(Pulse VERSION 0.1.0 LANGUAGES C CXX)
+project(Fabric VERSION 0.1.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,8 +51,8 @@ add_executable(pulse_demo
 target_link_libraries(pulse_demo PRIVATE pulse)
 
 juce_add_plugin(PulsePlugin
-  COMPANY_NAME "Modular Signal"
-  BUNDLE_ID "com.modularsignal.pulse"
+  COMPANY_NAME "matd.space"
+  BUNDLE_ID "space.matd.fabric"
   VERSION ${PROJECT_VERSION}
   IS_SYNTH FALSE
   IS_MIDI_EFFECT TRUE
@@ -60,10 +60,10 @@ juce_add_plugin(PulsePlugin
   NEEDS_MIDI_OUTPUT TRUE
   EDITOR_WANTS_KEYBOARD_FOCUS TRUE
   COPY_PLUGIN_AFTER_BUILD FALSE
-  PLUGIN_MANUFACTURER_CODE MdSG
-  PLUGIN_CODE Plse
+  PLUGIN_MANUFACTURER_CODE MtdS
+  PLUGIN_CODE Fbrc
   FORMATS AU Standalone
-  PRODUCT_NAME "Pulse"
+  PRODUCT_NAME "Fabric"
   AU_MAIN_TYPE kAudioUnitType_MIDIProcessor
 )
 

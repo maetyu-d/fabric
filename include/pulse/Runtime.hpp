@@ -48,6 +48,9 @@ struct ProcessContext {
     double sampleRate = 44100.0;
     std::uint32_t blockSize = 512;
     double bpm = 120.0;
+    double transportPpq = 0.0;
+    bool transportPlaying = false;
+    bool syncToTransport = true;
 };
 
 class RuntimeNode {
@@ -63,6 +66,7 @@ public:
     [[nodiscard]] virtual std::optional<int> currentSectionIndex() const;
     [[nodiscard]] virtual std::optional<double> currentSectionPhase() const;
     [[nodiscard]] virtual std::optional<std::uint64_t> sectionAdvanceCount() const;
+    [[nodiscard]] virtual std::optional<std::string> activeStateLabel() const;
 };
 
 class StubRuntimeNode final : public RuntimeNode {
@@ -98,6 +102,7 @@ public:
     [[nodiscard]] std::optional<int> currentSectionIndex(const std::string& moduleName) const;
     [[nodiscard]] std::optional<double> currentSectionPhase(const std::string& moduleName) const;
     [[nodiscard]] std::optional<std::uint64_t> sectionAdvanceCount(const std::string& moduleName) const;
+    [[nodiscard]] std::optional<std::string> activeStateLabel(const std::string& moduleName) const;
 
 private:
     struct PortBuffers {

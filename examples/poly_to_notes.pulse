@@ -1,0 +1,39 @@
+patch poly_to_notes
+
+generate clock metro
+  every 1/16
+end
+
+generate pattern low
+  notes C3 E3 G3 B3
+end
+
+generate pattern high
+  notes E4 G4 B4 D5
+end
+
+shape lists lengths
+  time 220ms 280ms
+  gate 80% 90%
+end
+
+project to_notes chordify
+  mode poly
+  voices 2
+  steal oldest
+  scale C major
+  range C2..C6
+  velocity 100
+end
+
+output midi out
+end
+
+connect metro -> low.trigger
+connect metro -> high.trigger
+connect low -> chordify
+connect high -> chordify
+connect lengths.time -> chordify.time
+connect lengths.gate -> chordify.gate
+connect chordify -> out
+end

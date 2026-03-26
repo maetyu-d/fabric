@@ -1,0 +1,48 @@
+patch section_planner
+
+generate clock metro
+  every 1/64
+end
+
+generate pattern roots
+  notes C3 A2 F3 G2 E3 D3
+end
+
+generate section form
+  section verse tonic 2 dominant 2
+  section chorus tonic 2 subdominant 2 dominant 2 tonic 2
+end
+
+shape lists lengths
+  time 420ms
+  gate 95%
+end
+
+project to_notes mover
+  mode poly
+  voices 6
+  steal oldest
+  chord major
+  invert 1
+  movement nearest
+  arrive on 2
+  cadence close
+  keep bass
+  keep top
+  avoid crossing
+  scale C major
+  range C2..C6
+  velocity 100
+end
+
+output midi out
+end
+
+connect metro -> roots.trigger
+connect metro -> form.trigger
+connect roots -> mover
+connect form -> mover.phrase
+connect lengths.time -> mover.time
+connect lengths.gate -> mover.gate
+connect mover -> out
+end

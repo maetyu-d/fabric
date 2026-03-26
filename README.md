@@ -1,0 +1,1185 @@
+# Pulse
+
+Pulse is a small, human-readable language for building modular musical systems inside a JUCE-based Audio Unit MIDI Effect plugin.
+
+It is not just a MIDI scripting language.
+
+It is a patch language for:
+
+- generating MIDI
+- transforming MIDI
+- extracting motion and structure from MIDI input
+- building modulation and control shapes
+- connecting generators, analyzers, and processors together in a modular way
+
+The goal is to make strange and powerful musical systems readable as plain text.
+
+## Design Goals
+
+Pulse is designed around six goals:
+
+1. Be readable by musicians, not just programmers.
+2. Run safely inside a real-time JUCE plugin.
+3. Support both practical MIDI tools and experimental composition systems.
+4. Treat rhythm, pitch, gates, and modulation as first-class signals.
+5. Make modular routing explicit and easy to follow.
+6. Stay small enough to implement without becoming a full general-purpose language.
+
+## The Core Shift
+
+The language should not think only in terms of "notes in, notes out."
+
+Your examples show that a useful system needs to work across several musical signal domains:
+
+- `midi`
+- `trigger`
+- `gate`
+- `value`
+- `pitch`
+
+That means the language must support modules that:
+
+- convert MIDI into control structure
+- derive gates or pulses from performance behavior
+- quantize continuous motion into harmonic pitch
+- split and merge event streams
+- store, reshape, and reinterpret musical memory
+
+This gives the language a modular-synth-like spirit while still living inside a MIDI plugin.
+
+## What Pulse Is
+
+Pulse is a graph language.
+
+A Pulse patch is a set of named modules connected by explicit signal routes.
+
+Modules fall into a small number of families:
+
+- `input`
+- `analyze`
+- `generate`
+- `shape`
+- `transform`
+- `memory`
+- `project`
+- `output`
+
+Each module:
+
+- has a kind
+- has a name
+- declares properties
+- exposes typed inputs and outputs
+
+Connections are written explicitly:
+
+```pulse
+connect keys -> motion
+connect motion.pulse1 -> bass.trigger
+connect bass -> out
+```
+
+## A First Example
+
+```pulse
+patch live_memory_machine
+
+scale D minor
+tempo 120
+
+input midi keys
+  channel 1
+end
+
+analyze motion motion1
+  channels 8
+  space 0.4
+  clocked on
+end
+
+transform quantize in_key
+  scale D minor
+end
+
+transform split bands
+  by note
+  low below C3
+  mid C3..B4
+  high above B4
+end
+
+transform delay low_late
+  time 40ms
+end
+
+memory smear afterimage
+  keep 3 notes
+  weights 0.60 0.25 0.15
+  drift weights 0.05
+end
+
+output midi out
+end
+
+connect keys -> motion1
+connect keys -> in_key
+connect in_key -> bands
+connect bands.low -> low_late
+connect bands.mid -> afterimage
+connect low_late -> out
+connect afterimage -> out
+end
+```
+
+That patch says:
+
+- take live MIDI input
+- derive motion information from it
+- quantize it to a scale
+- split it into note bands
+- delay the low notes
+- smear the middle notes through pitch memory
+- send the result out
+
+This is the level of readability the language should aim for.
+
+## Signal Types
+
+Pulse should have five core signal types.
+
+### `midi`
+
+Discrete MIDI events:
+
+- note on
+- note off
+- cc
+- pitch bend
+- aftertouch
+- program change
+
+### `trigger`
+
+A short event used to advance, fire, or sample something.
+
+Examples:
+
+- clock ticks
+- note-derived pulses
+- threshold crossings
+- random impulses
+
+### `gate`
+
+A held on/off state with duration.
+
+Examples:
+
+- note held
+- channel active
+- odd/even activity gate
+- pattern open/closed
+
+### `value`
+
+A continuous or stepped numeric signal.
+
+Examples:
+
+- LFO output
+- envelope level
+- motion speed
+- stage interpolation
+- density
+
+### `pitch`
+
+A musical pitch representation before final MIDI note output.
+
+This is useful when a process produces pitch-like motion that should later be:
+
+- quantized
+- harmonized
+- projected into a scale
+- converted to MIDI note numbers
+
+Keeping `pitch` separate from raw MIDI notes gives the language room for more experimental ideas without making everything obscure.
+
+## Module Families
+
+The language becomes much clearer if each module belongs to a family with a musical purpose.
+
+## 1. `input`
+
+Input modules receive external information.
+
+Examples:
+
+- live MIDI from the host
+- note input
+- CC streams
+- trigger input from another process
+
+Example:
+
+```pulse
+input midi keys
+  channel any
+end
+```
+
+## 2. `analyze`
+
+Analyze modules derive structure from incoming material.
+
+This is where example 2 belongs.
+
+They do not just pass MIDI through. They extract motion, activity, and event structure from MIDI behavior.
+
+Example:
+
+```pulse
+analyze motion tracker
+  channels 8
+  space 0.35
+  clocked on
+end
+```
+
+Possible outputs:
+
+- `tracker.pulse1`
+- `tracker.pulse2`
+- `tracker.speed`
+- `tracker.even`
+- `tracker.odd`
+
+Useful analyze kinds:
+
+- `motion`
+- `density`
+- `zones`
+- `crossings`
+- `activity`
+- `intervals`
+- `direction`
+
+## 3. `generate`
+
+Generate modules create new musical material.
+
+These are not necessarily step sequencers only. They can be clocks, patterns, agents, or rule systems.
+
+Examples:
+
+- `clock`
+- `pattern`
+- `fibonacci`
+- `growth`
+- `swarm`
+- `collapse`
+- `random`
+
+Simple example:
+
+```pulse
+generate clock metro
+  every 1/16
+end
+```
+
+Algorithmic example:
+
+```pulse
+generate fibonacci fib1
+  length 8
+  map 0 2 3 5 7
+  use as rhythm
+end
+```
+
+## 4. `shape`
+
+Shape modules create or process staged, continuous, or interpolated control structures.
+
+This family is central to your examples.
+
+It covers:
+
+- multi-stage envelopes
+- complex LFOs
+- voltage-style processors
+- MARF-style list traversal
+- interpolation between stored points
+
+Example:
+
+```pulse
+shape stages mod_a
+  mode loop
+  stages 13
+
+  stage 1 level 0.10 time 40ms curve exp
+  stage 2 level 0.75 time 120ms curve smooth
+  stage 3 level 0.20 time 2s curve log
+end
+```
+
+MARF-like example:
+
+```pulse
+shape lists marf1
+  pitch C3 E3 G3 Bb3
+  time 80ms 140ms 220ms 500ms
+  gate 30% 60% 90% 40%
+
+  advance pitch on note
+  advance time on random
+  advance gate on threshold 0.7
+
+  interpolate pitch on
+  interpolate time on
+end
+```
+
+## 5. `transform`
+
+Transform modules modify incoming material.
+
+This is the practical workhorse family.
+
+Examples:
+
+- `quantize`
+- `transpose`
+- `filter`
+- `split`
+- `delay`
+- `bounce`
+- `loop`
+- `bits`
+- `velocity`
+- `length`
+- `humanize`
+- `arp`
+
+Examples:
+
+```pulse
+transform quantize in_key
+  scale C minor
+end
+```
+
+```pulse
+transform filter high_notes
+  type note
+  pass above C4
+end
+```
+
+```pulse
+transform bits crush_velocity
+  target velocity
+  and 11110000b
+end
+```
+
+## 6. `memory`
+
+Memory modules work with history, residue, fragment stores, and temporal blending.
+
+This is where the language becomes distinctive.
+
+Examples:
+
+- temporal smear
+- cut-up fragment recombination
+- history-weighted pitch blending
+- phrase residue
+- continuity-based rearrangement
+
+Example:
+
+```pulse
+memory smear bergson
+  keep 3 notes
+  weights 0.60 0.25 0.15
+  drift weights 0.05
+end
+```
+
+Cut-up example:
+
+```pulse
+memory cutup burroughs
+  slice 1/16..1 beat
+  tag automatically
+  favor harmonic
+  keep continuity 0.35
+end
+```
+
+## 7. `project`
+
+Project modules map abstract material into final usable musical form.
+
+This is where `value` or `pitch` streams become performable notes.
+
+Examples:
+
+- project values into a scale
+- map warped pitch space back to notes
+- convert continuous pitch into MIDI output
+
+Example:
+
+```pulse
+project to_notes notes1
+  scale D dorian
+  range C2..C6
+end
+```
+
+## 8. `output`
+
+Output modules emit final results.
+
+Example:
+
+```pulse
+output midi out
+end
+```
+
+Version 1 only really needs `output midi`, but debug or monitor outputs can be added later.
+
+## Syntax
+
+The syntax should feel like structured notes, not programming punctuation.
+
+## Patch Structure
+
+```text
+patch <name>
+  <global-setting>*
+  <module>*
+  <connection>*
+end
+```
+
+## Module Structure
+
+```text
+<family> <kind> <name>
+  <property>*
+end
+```
+
+Examples:
+
+```pulse
+generate clock metro
+  every 1/16
+end
+
+transform delay late
+  time 80ms
+end
+```
+
+## Connections
+
+```text
+connect <from> -> <to>
+connect <from>.<port> -> <to>
+connect <from> -> <to>.<port>
+connect <from>.<port> -> <to>.<port>
+```
+
+Examples:
+
+```pulse
+connect keys -> split1
+connect split1.high -> arp1
+connect motion1.speed -> mod_a.rate
+connect metro -> seq1.trigger
+```
+
+## Properties
+
+Properties are plain key-value lines:
+
+```pulse
+scale D minor
+gate 70%
+amount +12
+time 240ms
+```
+
+## Lists
+
+Lists are simple and space-separated:
+
+```pulse
+notes C3 E3 G3 Bb3
+weights 0.60 0.25 0.15
+ratios 3/2 5/4 7/4
+series 1 1 2 3 5 8 13
+```
+
+## Comments
+
+Use `#`:
+
+```pulse
+# blur the middle register through note memory
+memory smear bergson
+  keep 3 notes
+end
+```
+
+## Time
+
+Pulse should prefer musical time, but allow milliseconds where needed.
+
+Supported forms:
+
+- `1/4`
+- `1/8`
+- `1/16`
+- `2 beats`
+- `4 bars`
+- `20ms`
+- `3s`
+- `2m`
+
+This matters because your examples range from micro-timing to multi-minute modulation.
+
+## Core Use Cases From Your Examples
+
+These examples define what the language should optimize for.
+
+## 1. Multi-Channel Stage Modulation
+
+A four-channel staged slope engine that can behave like:
+
+- complex envelope
+- flexible LFO
+- step sequence
+
+Example:
+
+```pulse
+shape stages mod4
+  channels 4
+  stages 13
+  overlap on
+  run free
+
+  stage 1 level 0.1 time 20ms curve exp
+  stage 2 level 0.8 time 200ms curve smooth
+  stage 3 level 0.3 time 2s curve log
+end
+```
+
+This means the language needs:
+
+- channels
+- per-stage level, time, and curve
+- trigger or free-run mode
+- live modulation of stage properties
+
+## 2. Motion Extraction From MIDI
+
+Derive pulses, speed events, and activity gates from incoming MIDI motion.
+
+Example:
+
+```pulse
+input midi performer
+  channel 1
+end
+
+analyze motion motion1
+  channels 8
+  space 0.4
+  clocked on
+end
+
+connect performer -> motion1
+```
+
+This implies:
+
+- MIDI analysis as a first-class module family
+- multiple typed outputs
+- optional synchronization input
+
+## 3. Quantized Harmonic Reinterpretation
+
+Take incoming material and force it into harmonic structure.
+
+Example:
+
+```pulse
+transform quantize lock
+  scale A minor
+end
+```
+
+This should work for:
+
+- MIDI note streams
+- unquantized sequences
+- control/value streams that are being used as pitch
+
+## 4. Hybrid Sequencer Envelope Processor
+
+A 16-stage system that can operate as sequence, envelope, or non-linear voltage processor.
+
+This belongs naturally in `shape`.
+
+## 5. Fibonacci and User-Defined Pattern Generation
+
+Example:
+
+```pulse
+generate fibonacci fib1
+  length 8
+  use as rhythm
+end
+```
+
+or:
+
+```pulse
+generate pattern custom
+  series 1 1 2 3 5 8 13
+  loop on
+end
+```
+
+This suggests algorithmic pattern modules should be plain and friendly, not math-heavy.
+
+## 6. MIDI Highpass and Lowpass Filters
+
+These should be musical filters for MIDI data, not audio filters.
+
+Examples:
+
+```pulse
+transform filter low_notes
+  type note
+  pass below C4
+end
+```
+
+```pulse
+transform filter strong_hits
+  type velocity
+  pass above 90
+end
+```
+
+## 7. Bitwise MIDI Operations
+
+Pulse should allow low-level operations, but keep them readable and scoped.
+
+Example:
+
+```pulse
+transform bits xor_vel
+  target velocity
+  xor 00001111b
+end
+```
+
+Version 1 should apply these only to well-defined fields:
+
+- note
+- velocity
+- cc value
+- channel
+
+Not arbitrary raw byte hacking.
+
+## 8. Split MIDI Into Bands and Delay Each Band
+
+Example:
+
+```pulse
+transform split bands
+  by note
+  low below C3
+  mid C3..B4
+  high above B4
+end
+
+transform delay low_late
+  time 30ms
+end
+
+transform delay mid_late
+  time 80ms
+end
+
+transform delay high_late
+  time 140ms
+end
+```
+
+This implies:
+
+- named outputs
+- parallel routing
+- branch merging
+- MIDI event delay with proper timestamp handling
+
+## 9. Bouncing Ball MIDI
+
+Example:
+
+```pulse
+transform bounce ball
+  count 8
+  spacing 240ms -> 20ms
+  velocity 110 -> 40
+end
+```
+
+This is a temporal gesture processor:
+
+- repeated events
+- changing spacing
+- changing dynamics
+- optional pitch drift
+
+## 10. MIDI Looping
+
+Example:
+
+```pulse
+transform loop phrase1
+  capture 1 bar
+  playback on
+  overdub off
+  quantize to 1/16
+end
+```
+
+This means the language should distinguish:
+
+- phrase loops
+- note loops
+- event loops
+- overdub loops
+
+## 11. Temporal Smearing
+
+Example:
+
+```pulse
+memory smear bergson
+  keep 3 notes
+  weights 0.60 0.25 0.15
+  drift weights 0.05
+end
+```
+
+This requires:
+
+- history buffers
+- weighted blending
+- parameter drift
+- conversion back to discrete pitch when needed
+
+## 12. Topological Pitch Space
+
+This is an advanced idea and probably not v1, but Pulse should leave room for it.
+
+Concept:
+
+- represent pitch in a warped internal space
+- transform it by folds and wormholes
+- map it back to notes later
+
+This likely belongs in `project` or in advanced `memory/project` modules rather than the core language syntax.
+
+## 13. Harmonic Crystal Growth
+
+Example:
+
+```pulse
+generate growth crystal
+  root C2
+  ratios 3/2 5/4 7/4
+  add when stable
+  prune when unstable
+  map growth to density
+end
+```
+
+This introduces self-organizing harmony as a generator family.
+
+## 14. Multi-Agent MIDI Swarm
+
+Example:
+
+```pulse
+generate swarm voices
+  agents 6
+
+  agent 1 type anchor
+  agent 2 type follower
+  agent 3 type follower
+  agent 4 type rebel
+  agent 5 type rebel
+  agent 6 type follower
+
+  center D
+  cluster 0.7
+  negotiate rhythm
+end
+```
+
+This belongs in the advanced generative layer.
+
+## 15. Constraint Collapse Engine
+
+Example:
+
+```pulse
+generate collapse engine1
+  rules
+    no repeated intervals
+    max step 2
+    avoid tonic
+  end
+
+  on collapse mutate 2 rules
+end
+```
+
+This means Pulse should allow a readable rule syntax for some advanced generators.
+
+## 16. Endless Cut-Up Sequencer
+
+Example:
+
+```pulse
+memory cutup burroughs
+  slice 1/16..1 beat
+  tag automatically
+  favor harmonic
+  keep continuity 0.35
+end
+```
+
+This adds:
+
+- fragment storage
+- derived tags
+- probabilistic recombination
+- continuity constraints
+
+## 17. Voltage List Engine
+
+Example:
+
+```pulse
+shape lists marf1
+  pitch C3 E3 G3 Bb3
+  time 80ms 140ms 220ms 500ms
+  gate 30% 60% 90% 40%
+
+  advance pitch on note
+  advance time on threshold 0.6
+  advance gate on random
+
+  interpolate pitch on
+  interpolate time on
+end
+```
+
+This is a major reason `shape` should be a top-level family.
+
+## What Should Be In Version 1
+
+Pulse should start small, but not too small.
+
+The best v1 is the smallest language that still expresses your core practical ideas.
+
+## V1 Signal Types
+
+- `midi`
+- `trigger`
+- `gate`
+- `value`
+- `pitch`
+
+## V1 Module Families
+
+- `input`
+- `analyze`
+- `generate`
+- `shape`
+- `transform`
+- `project`
+- `output`
+
+`memory` can begin with a minimal `smear` or `loop` module, but it does not need its full future range on day one.
+
+## V1 Module Kinds
+
+### Input
+
+- `midi`
+
+### Analyze
+
+- `motion`
+- `density`
+- `activity`
+
+### Generate
+
+- `clock`
+- `pattern`
+- `fibonacci`
+- `random`
+
+### Shape
+
+- `stages`
+- `lists`
+- `lfo`
+
+### Transform
+
+- `quantize`
+- `transpose`
+- `filter`
+- `split`
+- `delay`
+- `bounce`
+- `loop`
+- `bits`
+- `velocity`
+- `length`
+- `humanize`
+- `arp`
+
+### Project
+
+- `to_notes`
+- `to_values`
+
+### Output
+
+- `midi`
+
+That is already a powerful system.
+
+## What Should Wait Until Later
+
+These are exciting, but they should sit above the core until the runtime and syntax are stable:
+
+- topological pitch space
+- harmonic crystal growth
+- swarm systems
+- constraint collapse
+- full cut-up fragment engines
+- richer memory recombination
+
+They should still influence the design, but not block the first implementation.
+
+## Suggested Grammar
+
+A simple block grammar is enough.
+
+```text
+patch <name>
+  <global>*
+  <module>*
+  <connection>*
+end
+
+<module> ::= <family> <kind> <name>
+             <property>*
+             end
+
+<connection> ::= connect <source> -> <target>
+```
+
+Where:
+
+- `<family>` is one of `input`, `analyze`, `generate`, `shape`, `transform`, `memory`, `project`, `output`
+- `<kind>` is a built-in module kind
+- `<name>` is a unique module name
+
+## Type Rules
+
+Connections should be checked at compile time.
+
+Examples:
+
+- `clock` outputs `trigger`
+- `stages` outputs `value`
+- `quantize` may accept `pitch` or `midi`
+- `split` accepts `midi`
+- `to_notes` accepts `pitch` or `value` and outputs `midi`
+- `motion.speed` may output `value`
+- `motion.even` may output `gate`
+
+Bad connections should fail with readable errors:
+
+```text
+Cannot connect `metro` to `transpose1`.
+`metro` outputs trigger, but `transpose` expects midi or pitch.
+```
+
+## Compile Model
+
+Pulse should be compiled before playback.
+
+Do not parse or interpret script text inside the audio callback.
+
+The processing model should be:
+
+1. Parse source text into an AST.
+2. Validate module names, properties, and references.
+3. Resolve signal types and ports.
+4. Build a fixed directed graph.
+5. Reject illegal cycles in v1.
+6. Preallocate runtime nodes and event buffers.
+7. Run the graph each `processBlock`.
+
+## JUCE Runtime Model
+
+Inside a JUCE MIDI effect plugin, the architecture could look like:
+
+- `PulseLexer`
+- `PulseParser`
+- `PulseAst`
+- `PulseCompiler`
+- `CompiledPatch`
+- `RuntimeNode`
+- `EventBuffer`
+- `MidiScheduler`
+
+## Processing Per Block
+
+For each `processBlock`:
+
+1. Read host transport and tempo if available.
+2. Feed incoming MIDI into `input midi` nodes.
+3. Advance clocks and timed shapes.
+4. Run graph nodes in topological order.
+5. Route typed events between nodes.
+6. Schedule note-offs and delayed MIDI correctly.
+7. Emit the final `juce::MidiBuffer`.
+
+## Real-Time Safety Rules
+
+Pulse should be strict here:
+
+- no dynamic allocation in `processBlock`
+- no file IO in `processBlock`
+- no runtime reparsing in `processBlock`
+- bounded per-block work
+- preallocated buffers for events and node state
+
+This matters because some modules, like loops or smears, can get heavy if not constrained.
+
+## Error Style
+
+Errors should read like editor guidance, not compiler noise.
+
+Good examples:
+
+```text
+Unknown module `bergon`.
+Did you mean `bergson`?
+```
+
+```text
+Line 24: `weights 0.6 0.25` is incomplete.
+`smear` expects 3 weights because `keep 3 notes` was set.
+```
+
+```text
+Cannot connect `tracker.speed` to `split1`.
+`tracker.speed` outputs value, but `split` expects midi.
+```
+
+## Why This Design Fits Your Goals
+
+It matches the examples directly:
+
+- staged slope systems live in `shape`
+- MIDI-derived motion lives in `analyze`
+- harmonic reinterpretation lives in `transform` and `project`
+- algorithmic series live in `generate`
+- memory and residue live in `memory`
+- practical MIDI tools stay simple in `transform`
+
+It also keeps the language readable:
+
+- short blocks
+- plain words
+- explicit routing
+- little punctuation
+- musical vocabulary
+
+And it is implementable inside JUCE:
+
+- fixed graph
+- typed connections
+- bounded runtime
+- deterministic scheduling
+
+## Final Recommendation
+
+Build Pulse as a small modular musical language, not as a general programming language and not as a narrow MIDI macro system.
+
+The identity should be:
+
+- text-based modular patching
+- strong support for MIDI analysis and generation
+- first-class modulation and staged control
+- a clean path from practical MIDI utilities to experimental composition systems
+
+If the language gets this part right, it can support everything from:
+
+- quantized live arps
+- MIDI band splitting and delays
+- bouncing ball gesture processors
+- looping and cut-up recombination
+- memory smears
+- MARF-like list engines
+- swarm and collapse generators
+
+without losing readability.
+
+## Best Next Step
+
+The strongest next implementation move is:
+
+1. lock the v1 syntax
+2. define AST structs in C++
+3. define the signal type system
+4. implement parser and validator
+5. implement a minimal runtime graph
+6. build these first nodes:
+   - `input midi`
+   - `generate clock`
+   - `shape stages`
+   - `transform quantize`
+   - `transform split`
+   - `transform delay`
+   - `transform arp`
+   - `output midi`
+7. add `analyze motion` immediately after
+
+That would give you a real prototype quickly while keeping the door open for the more radical modules later.

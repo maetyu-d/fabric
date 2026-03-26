@@ -1,0 +1,29 @@
+patch random_machine
+
+generate clock metro
+  every 1/32
+end
+
+generate random chance1
+  notes D3 F3 A3 C4 E4
+  mode walk
+  pass 70%
+  avoid repeat
+  max step 5
+  bias center 0.8
+  seed 42
+end
+
+project to_notes notes1
+  scale D minor
+  range C2..C5
+  velocity 98
+end
+
+output midi out
+end
+
+connect metro -> chance1.trigger
+connect chance1 -> notes1
+connect notes1 -> out
+end

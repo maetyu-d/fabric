@@ -1,0 +1,25 @@
+patch cutup_machine
+
+input midi keys
+  channel 1
+end
+
+generate clock metro
+  every 1/32
+end
+
+memory cutup burroughs
+  capture 1/16
+  slice 2
+  keep continuity 0.35
+  favor harmonic
+  seed 42
+end
+
+output midi out
+end
+
+connect keys -> burroughs.in
+connect metro -> burroughs.trigger
+connect burroughs -> out
+end

@@ -1,0 +1,35 @@
+patch chord_projector
+
+generate clock metro
+  every 1/16
+end
+
+generate pattern roots
+  notes C3 E3 G3 B3 D4
+end
+
+shape lists lengths
+  time 500ms
+  gate 95%
+end
+
+project to_notes harmony
+  mode poly
+  voices 5
+  steal farthest_from_center
+  center C4
+  chord maj7
+  scale C major
+  range C2..C6
+  velocity 104
+end
+
+output midi out
+end
+
+connect metro -> roots.trigger
+connect roots -> harmony
+connect lengths.time -> harmony.time
+connect lengths.gate -> harmony.gate
+connect harmony -> out
+end

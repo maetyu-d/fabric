@@ -1,0 +1,34 @@
+patch random_held_notes
+
+input midi keys
+  channel 1
+end
+
+generate clock metro
+  every 1/32
+end
+
+generate random chance1
+  from held notes
+  mode walk
+  pass 75%
+  avoid repeat
+  max step 7
+  bias center 0.6
+  seed 42
+end
+
+project to_notes notes1
+  scale D minor
+  range C2..C5
+  velocity 98
+end
+
+output midi out
+end
+
+connect keys -> chance1.in
+connect metro -> chance1.trigger
+connect chance1 -> notes1
+connect notes1 -> out
+end

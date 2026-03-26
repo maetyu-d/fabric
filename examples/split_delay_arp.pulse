@@ -1,0 +1,39 @@
+patch split_delay_arp
+
+tempo 120
+scale D minor
+
+input midi keys
+  channel 1
+end
+
+generate clock metro
+  every 1/16
+end
+
+transform split bands
+  by note
+  low below C3
+  mid C3..B4
+  high above B4
+end
+
+transform delay low_late
+  time 40ms
+end
+
+transform arp arp1
+  gate 70%
+end
+
+output midi out
+end
+
+connect keys -> bands
+connect bands.low -> low_late
+connect bands.mid -> arp1
+connect metro -> arp1.trigger
+connect low_late -> out
+connect arp1 -> out
+connect bands.high -> out
+end

@@ -1,0 +1,47 @@
+patch lists_to_notes
+
+input midi keys
+  channel 1
+end
+
+generate clock metro
+  every 1/8
+end
+
+shape stages mod1
+  mode loop
+  stage 1 level 0.2 time 80ms curve linear
+  stage 2 level 0.9 time 120ms curve smooth
+  stage 3 level 0.4 time 200ms curve exp
+end
+
+shape lists marf1
+  pitch C3 E3 G3 Bb3
+  time 80ms 140ms 220ms 500ms
+  gate 30% 60% 90% 40%
+
+  advance pitch on note
+  advance time on threshold 0.7
+  advance gate on random
+
+  interpolate pitch on
+  interpolate time on
+end
+
+project to_notes notes1
+  scale D minor
+  range C2..C6
+  velocity 96
+end
+
+output midi out
+end
+
+connect keys -> marf1.note
+connect metro -> marf1.random
+connect mod1 -> marf1.threshold
+connect marf1.pitch -> notes1
+connect marf1.time -> notes1.time
+connect marf1.gate -> notes1.gate
+connect notes1 -> out
+end

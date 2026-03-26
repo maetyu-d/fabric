@@ -1,0 +1,24 @@
+patch pattern_machine
+
+generate clock metro
+  every 1/16
+end
+
+generate pattern riff
+  notes D3 F3 A3 C4
+  order up_down
+end
+
+project to_notes notes1
+  scale D dorian
+  range C2..C5
+  velocity 100
+end
+
+output midi out
+end
+
+connect metro -> riff.trigger
+connect riff -> notes1
+connect notes1 -> out
+end

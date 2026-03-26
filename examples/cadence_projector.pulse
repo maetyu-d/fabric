@@ -1,0 +1,42 @@
+patch cadence_projector
+
+generate clock metro
+  every 1/64
+end
+
+generate pattern roots
+  notes C3 A2 F3 G2 E3 D3
+end
+
+shape lists lengths
+  time 420ms
+  gate 95%
+end
+
+project to_notes mover
+  mode poly
+  voices 6
+  steal oldest
+  chord major
+  invert 1
+  movement nearest
+  arrive on 4
+  cadence to tonic
+  cadence close
+  keep bass
+  keep top
+  avoid crossing
+  scale C major
+  range C2..C6
+  velocity 100
+end
+
+output midi out
+end
+
+connect metro -> roots.trigger
+connect roots -> mover
+connect lengths.time -> mover.time
+connect lengths.gate -> mover.gate
+connect mover -> out
+end

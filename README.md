@@ -1,16 +1,25 @@
 # Fabric
 
-Fabric is a small, human-readable language for building modular music systems inside a JUCE-based Audio Unit MIDI Effect plugin (VST3 and standalone also available but untested).
-
-It is primarily a MIDI scripting language for:
+Fabric is a small, human-readable patch language for building modular MIDI music systems inside a JUCE-based Audio Unit MIDI Effect plugin (VST3 and standalone also available but untested). It is primarily for:
 
 - generating MIDI
 - transforming MIDI
 - extracting motion and structure from MIDI input
 - building modulation and control shapes
-- connecting analysers, generators, and processors together
+- connecting together analysers, generators, and processors
 
-The goal is to make diverse, modular, mostly MIDI musical systems as readable as possible
+The aim is to make diverse, modular, (mostly) MIDI musical systems as easily (human) readable as possible
+
+## Design Goals
+
+Fabric is designed around six goals:
+
+1. Be readable by musicians, not just programmers.
+2. Run safely inside a real-time JUCE plugin.
+3. Support both practical MIDI tools and experimental composition systems.
+4. Treat rhythm, pitch, gates, and modulation as first-class signals.
+5. Make modular routing explicit and easy to follow.
+6. Stay small enough to implement without becoming a full general-purpose language.
 
 ## Surface Syntax
 
@@ -115,25 +124,10 @@ notes chords
 end
 ```
 
-## Design Goals
 
-Fabric is designed around six goals:
+## What Fabric In More Detail
 
-1. Be readable by musicians, not just programmers.
-2. Run safely inside a real-time JUCE plugin.
-3. Support both practical MIDI tools and experimental composition systems.
-4. Treat rhythm, pitch, gates, and modulation as first-class signals.
-5. Make modular routing explicit and easy to follow.
-6. Stay small enough to implement without becoming a full general-purpose language.
-
-
-## What Fabric Is
-
-Fabric is a graph language.
-
-A Fabric patch is a set of named modules connected by explicit signal routes.
-
-Modules fall into a small number of families:
+Fabric is a graph language. A Fabric patch is a set of named modules connected by explicit signal routes. Modules fall into a small number of families:
 
 - `input`
 - `analyze`

@@ -25,6 +25,22 @@ public:
         bool isNoteOff = false;
     };
 
+    struct NodeIoSnapshot {
+        juce::String moduleName;
+        juce::String family;
+        juce::String kind;
+        std::vector<IoEventSummary> incoming;
+        std::vector<IoEventSummary> outgoing;
+        int incomingCount = 0;
+        int outgoingCount = 0;
+        int incomingActiveCount = 0;
+        int outgoingActiveCount = 0;
+        std::array<std::uint8_t, 128> incomingActive {};
+        std::array<std::uint8_t, 128> outgoingActive {};
+        std::array<std::uint8_t, 32> incomingHistory {};
+        std::array<std::uint8_t, 32> outgoingHistory {};
+    };
+
     struct IoSnapshot {
         std::vector<IoEventSummary> incoming;
         std::vector<IoEventSummary> outgoing;
@@ -36,6 +52,7 @@ public:
         std::array<std::uint8_t, 128> outgoingActive {};
         std::array<std::uint8_t, 32> incomingHistory {};
         std::array<std::uint8_t, 32> outgoingHistory {};
+        std::vector<NodeIoSnapshot> nodes;
     };
 
     struct UiDiagnostic {
@@ -172,6 +189,7 @@ private:
     static void eventsToMidiBuffer(const std::vector<pulse::Event>& events, double sampleRate, int blockSize, juce::MidiBuffer& midi);
     static IoEventSummary summariseEvent(const pulse::Event& event);
     static IoSnapshot buildIoSnapshot(const std::vector<pulse::Event>& incoming, const std::vector<pulse::Event>& outgoing);
+    static std::vector<NodeIoSnapshot> buildNodeIoSnapshots(const pulse::Engine& engine);
     static void updateActiveNotes(std::array<std::uint8_t, 128>& activeNotes, const std::vector<pulse::Event>& events);
     static void pushHistory(std::array<std::uint8_t, 32>& history, int count);
     static int countActiveNotes(const std::array<std::uint8_t, 128>& activeNotes);

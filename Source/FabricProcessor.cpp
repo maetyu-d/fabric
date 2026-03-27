@@ -25,8 +25,7 @@ struct FactoryPresetData {
 
 juce::String makeDefaultScript()
 {
-    return R"pulse(
-patch fabric_default
+    return R"pulse(patch fabric_default
 
 key D dorian
 
@@ -61,8 +60,7 @@ std::vector<FactoryPresetData> makeFactoryPresets()
 {
     return {
         { "Default Arp",
-            R"pulse(
-patch fabric_default
+            R"pulse(patch fabric_default
 
 scale D dorian
 
@@ -92,8 +90,7 @@ arp1 -> out
 end
 )pulse" },
         { "Random Walk",
-            R"pulse(
-patch random_machine
+            R"pulse(patch random_machine
 
 clock metro
   every 1/16
@@ -123,8 +120,7 @@ notes1 -> out
 end
 )pulse" },
         { "Pattern Machine",
-            R"pulse(
-patch pattern_machine
+            R"pulse(patch pattern_machine
 
 clock metro
   every 1/16
@@ -149,8 +145,7 @@ notes1 -> out
 end
 )pulse" },
         { "Groove Ratchet Arp",
-            R"pulse(
-patch groove_ratchet_arp
+            R"pulse(patch groove_ratchet_arp
 
 midi in keys
   channel 1
@@ -181,8 +176,7 @@ arp1 -> out
 end
 )pulse" },
         { "Motion Notes",
-            R"pulse(
-patch motion_to_notes
+            R"pulse(patch motion_to_notes
 
 midi in keys
 end
@@ -214,8 +208,7 @@ notes1 -> out
 end
 )pulse" },
         { "Stage Modulator",
-            R"pulse(
-patch lists_to_notes
+            R"pulse(patch lists_to_notes
 
 midi in keys
   channel 1
@@ -264,8 +257,7 @@ notes1 -> out
 end
 )pulse" },
         { "Complex Modulator",
-            R"pulse(
-patch complex_modulator
+            R"pulse(patch complex_modulator
 
 clock metro
   every 1/16
@@ -312,8 +304,7 @@ notes1 -> out
 end
 )pulse" },
         { "Modulated Modulator",
-            R"pulse(
-patch modulated_modulator
+            R"pulse(patch modulated_modulator
 
 clock metro
   every 1/16
@@ -369,8 +360,7 @@ notes1 -> out
 end
 )pulse" },
         { "Addressed Overlap Modulator",
-            R"pulse(
-patch addressed_overlap_modulator
+            R"pulse(patch addressed_overlap_modulator
 
 clock metro
   every 1/16
@@ -422,8 +412,7 @@ notes1 -> out
 end
 )pulse" },
         { "Quantized Motion Arp",
-            R"pulse(
-patch tuned_motion
+            R"pulse(patch tuned_motion
 
 scale D minor
 
@@ -453,8 +442,7 @@ arp1 -> out
 end
 )pulse" },
         { "Fibonacci Smear",
-            R"pulse(
-patch fibonacci_smear
+            R"pulse(patch fibonacci_smear
 
 clock metro
   every 1/16
@@ -487,8 +475,7 @@ bergson -> out
 end
 )pulse" },
         { "Warped Pitch Space",
-            R"pulse(
-patch warped_space
+            R"pulse(patch warped_space
 
 clock metro
   every 1/16
@@ -524,8 +511,7 @@ notes1 -> out
 end
 )pulse" },
         { "Crystal Growth",
-            R"pulse(
-patch crystal_growth
+            R"pulse(patch crystal_growth
 
 clock metro
   every 1/16
@@ -571,8 +557,7 @@ notes1 -> out
 end
 )pulse" },
         { "Multi-Agent Swarm",
-            R"pulse(
-patch swarm_machine
+            R"pulse(patch swarm_machine
 
 clock metro
   every 1/16
@@ -606,8 +591,7 @@ notes1 -> out
 end
 )pulse" },
         { "Constraint Collapse",
-            R"pulse(
-patch collapse_machine
+            R"pulse(patch collapse_machine
 
 clock metro
   every 1/16
@@ -660,8 +644,7 @@ notes1 -> out
 end
 )pulse" },
         { "Bands Delay Arp",
-            R"pulse(
-patch split_delay_arp
+            R"pulse(patch split_delay_arp
 
 tempo 120
 scale D minor
@@ -702,8 +685,7 @@ bands.high -> out
 end
 )pulse" },
         { "Bits Crush",
-            R"pulse(
-patch bits_crush
+            R"pulse(patch bits_crush
 
 midi in keys
 end
@@ -722,8 +704,7 @@ crush_velocity -> out
 end
 )pulse" },
         { "Filtered Bits Crush",
-            R"pulse(
-patch filtered_bits_crush
+            R"pulse(patch filtered_bits_crush
 
 midi in keys
 end
@@ -744,8 +725,7 @@ crush_velocity -> out
 end
 )pulse" },
         { "Filtered Bits Exclude",
-            R"pulse(
-patch filtered_bits_exclude
+            R"pulse(patch filtered_bits_exclude
 
 midi in keys
 end
@@ -768,8 +748,7 @@ dodge_hot_notes -> out
 end
 )pulse" },
         { "CC Glitch",
-            R"pulse(
-patch cc_glitch
+            R"pulse(patch cc_glitch
 
 midi in keys
 end
@@ -789,8 +768,7 @@ glitch_modwheel -> out
 end
 )pulse" },
         { "CC Glitch + Arp",
-            R"pulse(
-patch cc_glitch_arp
+            R"pulse(patch cc_glitch_arp
 
 midi in keys
 end
@@ -828,8 +806,7 @@ glitch_modwheel -> out
 end
 )pulse" },
         { "Bouncing Ball",
-            R"pulse(
-patch bouncing_ball
+            R"pulse(patch bouncing_ball
 
 clock metro
   every 1/4
@@ -861,8 +838,7 @@ ball -> out
 end
 )pulse" },
         { "MIDI Loop",
-            R"pulse(
-patch midi_loop
+            R"pulse(patch midi_loop
 
 midi in keys
   channel 1
@@ -883,8 +859,7 @@ phrase1 -> out
 end
 )pulse" },
         { "Held Note Random",
-            R"pulse(
-patch random_held_notes
+            R"pulse(patch random_held_notes
 
 midi in keys
   channel 1
@@ -919,8 +894,7 @@ notes1 -> out
 end
 )pulse" },
         { "Cut-Up Machine",
-            R"pulse(
-patch cutup_machine
+            R"pulse(patch cutup_machine
 
 midi in keys
   channel 1
@@ -947,8 +921,7 @@ burroughs -> out
 end
 )pulse" },
         { "Section Form",
-            R"pulse(
-patch section_controlled
+            R"pulse(patch section_controlled
 
 clock metro
   every 1/16
@@ -1187,6 +1160,7 @@ void FabricAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         ioSnapshot_.outgoingHistory = outgoingHistory_;
         ioSnapshot_.incomingActiveCount = countActiveNotes(incomingActiveNotes_);
         ioSnapshot_.outgoingActiveCount = countActiveNotes(outgoingActiveNotes_);
+        ioSnapshot_.nodes = buildNodeIoSnapshots(*state->engine);
     }
 
     eventsToMidiBuffer(rendered, context.sampleRate, static_cast<int>(context.blockSize), midiMessages);
@@ -1541,6 +1515,74 @@ FabricAudioProcessor::IoSnapshot FabricAudioProcessor::buildIoSnapshot(const std
     return snapshot;
 }
 
+std::vector<FabricAudioProcessor::NodeIoSnapshot> FabricAudioProcessor::buildNodeIoSnapshots(const pulse::Engine& engine)
+{
+    const auto* graph = engine.graph();
+    if (graph == nullptr) {
+        return {};
+    }
+
+    const auto& patch = graph->patch();
+    std::vector<NodeIoSnapshot> snapshots;
+    snapshots.reserve(patch.nodes.size());
+
+    for (std::size_t nodeIndex = 0; nodeIndex < patch.nodes.size(); ++nodeIndex) {
+        const auto& node = patch.nodes[nodeIndex];
+
+        std::vector<pulse::Event> incomingEvents;
+        std::vector<pulse::Event> outgoingEvents;
+        for (const auto& input : node.inputs) {
+            if (const auto* buffer = graph->inputBuffer(nodeIndex, input.name)) {
+                const auto& events = buffer->events();
+                incomingEvents.insert(incomingEvents.end(), events.begin(), events.end());
+            }
+        }
+        for (const auto& output : node.outputs) {
+            if (const auto* buffer = graph->outputBuffer(nodeIndex, output.name)) {
+                const auto& events = buffer->events();
+                outgoingEvents.insert(outgoingEvents.end(), events.begin(), events.end());
+            }
+        }
+
+        auto byTime = [](const pulse::Event& a, const pulse::Event& b) { return a.time < b.time; };
+        std::sort(incomingEvents.begin(), incomingEvents.end(), byTime);
+        std::sort(outgoingEvents.begin(), outgoingEvents.end(), byTime);
+
+        NodeIoSnapshot snapshot;
+        snapshot.moduleName = node.name;
+        snapshot.family = juce::String(pulse::toString(node.family));
+        snapshot.kind = node.kind;
+        snapshot.incomingCount = static_cast<int>(incomingEvents.size());
+        snapshot.outgoingCount = static_cast<int>(outgoingEvents.size());
+
+        constexpr std::size_t maxShown = 12;
+        snapshot.incoming.reserve(std::min(maxShown, incomingEvents.size()));
+        snapshot.outgoing.reserve(std::min(maxShown, outgoingEvents.size()));
+        for (std::size_t index = 0; index < incomingEvents.size() && index < maxShown; ++index) {
+            snapshot.incoming.push_back(summariseEvent(incomingEvents[index]));
+        }
+        for (std::size_t index = 0; index < outgoingEvents.size() && index < maxShown; ++index) {
+            snapshot.outgoing.push_back(summariseEvent(outgoingEvents[index]));
+        }
+
+        updateActiveNotes(snapshot.incomingActive, incomingEvents);
+        updateActiveNotes(snapshot.outgoingActive, outgoingEvents);
+        snapshot.incomingActiveCount = countActiveNotes(snapshot.incomingActive);
+        snapshot.outgoingActiveCount = countActiveNotes(snapshot.outgoingActive);
+
+        std::array<std::uint8_t, 32> incomingHistory {};
+        std::array<std::uint8_t, 32> outgoingHistory {};
+        incomingHistory.back() = static_cast<std::uint8_t>(juce::jlimit(0, 255, snapshot.incomingCount));
+        outgoingHistory.back() = static_cast<std::uint8_t>(juce::jlimit(0, 255, snapshot.outgoingCount));
+        snapshot.incomingHistory = incomingHistory;
+        snapshot.outgoingHistory = outgoingHistory;
+
+        snapshots.push_back(std::move(snapshot));
+    }
+
+    return snapshots;
+}
+
 void FabricAudioProcessor::updateActiveNotes(std::array<std::uint8_t, 128>& activeNotes, const std::vector<pulse::Event>& events)
 {
     for (const auto& event : events) {
@@ -1605,8 +1647,7 @@ const std::vector<FabricAudioProcessor::FactoryPreset>& FabricAudioProcessor::fa
 const std::vector<FabricAudioProcessor::TutorialEntry>& FabricAudioProcessor::tutorials()
 {
     static const std::vector<TutorialEntry> entries {
-        { "01 First Pattern", "Generate notes with a clock, a pattern, and a note projector.", R"pulse(
-patch pattern_machine
+        { "01 First Pattern", "Generate notes with a clock, a pattern, and a note projector.", R"pulse(patch pattern_machine
 
 clock metro
   every 1/16
@@ -1631,8 +1672,7 @@ riff -> notes1
 notes1 -> out
 end
 )pulse" },
-        { "02 Live Quantize And Arp", "Feed live MIDI through a scale quantizer and arpeggiator.", R"pulse(
-patch tutorial_live_quantize_arp
+        { "02 Live Quantize And Arp", "Feed live MIDI through a scale quantizer and arpeggiator.", R"pulse(patch tutorial_live_quantize_arp
 
 midi in keys
   channel 1
@@ -1659,8 +1699,7 @@ metro -> arp1.trigger
 arp1 -> out
 end
 )pulse" },
-        { "03 Random Walk", "Shape random melody so it moves locally instead of jumping everywhere.", R"pulse(
-patch random_machine
+        { "03 Random Walk", "Shape random melody so it moves locally instead of jumping everywhere.", R"pulse(patch random_machine
 
 clock metro
   every 1/16
@@ -1689,8 +1728,7 @@ chance1 -> notes1
 notes1 -> out
 end
 )pulse" },
-        { "04 Split Delay And Arp", "Split incoming MIDI into note bands and process each branch differently.", R"pulse(
-patch split_delay_arp
+        { "04 Split Delay And Arp", "Split incoming MIDI into note bands and process each branch differently.", R"pulse(patch split_delay_arp
 
 tempo 120
 scale D minor
@@ -1730,8 +1768,7 @@ arp1 -> out
 bands.high -> out
 end
 )pulse" },
-        { "05 MIDI Loop", "Capture a phrase and replay it as a loop.", R"pulse(
-patch midi_loop
+        { "05 MIDI Loop", "Capture a phrase and replay it as a loop.", R"pulse(patch midi_loop
 
 midi in keys
   channel 1
@@ -1751,8 +1788,7 @@ keys -> phrase1
 phrase1 -> out
 end
 )pulse" },
-        { "06 Bouncing Ball", "Turn a note into a decaying rhythmic bounce gesture.", R"pulse(
-patch bouncing_ball
+        { "06 Bouncing Ball", "Turn a note into a decaying rhythmic bounce gesture.", R"pulse(patch bouncing_ball
 
 clock metro
   every 1/4
@@ -1783,8 +1819,7 @@ notes1 -> ball
 ball -> out
 end
 )pulse" },
-        { "07 Motion To Notes", "Extract motion from live MIDI and reuse it as musical control.", R"pulse(
-patch motion_to_notes
+        { "07 Motion To Notes", "Extract motion from live MIDI and reuse it as musical control.", R"pulse(patch motion_to_notes
 
 midi in keys
 end
@@ -1815,8 +1850,7 @@ motion1.even -> notes1.gate
 notes1 -> out
 end
 )pulse" },
-        { "08 Lists To Notes", "Use list traversal for pitch, time, and gate to build evolving phrases.", R"pulse(
-patch lists_to_notes
+        { "08 Lists To Notes", "Use list traversal for pitch, time, and gate to build evolving phrases.", R"pulse(patch lists_to_notes
 
 midi in keys
   channel 1
@@ -1862,8 +1896,7 @@ marf1.gate -> notes1.gate
 notes1 -> out
 end
 )pulse" },
-        { "09 Groove Swing Ratchet", "Make the clock feel alive with swing, ratchets, and groove weighting.", R"pulse(
-patch groove_ratchet_arp
+        { "09 Groove Swing Ratchet", "Make the clock feel alive with swing, ratchets, and groove weighting.", R"pulse(patch groove_ratchet_arp
 
 midi in keys
   channel 1
@@ -1893,8 +1926,7 @@ metro -> arp1.trigger
 arp1 -> out
 end
 )pulse" },
-        { "10 Bitwise MIDI Filters", "Apply low-level bit operations only to the MIDI events you care about.", R"pulse(
-patch tutorial_filtered_bits
+        { "10 Bitwise MIDI Filters", "Apply low-level bit operations only to the MIDI events you care about.", R"pulse(patch tutorial_filtered_bits
 
 midi in keys
 end
@@ -1914,8 +1946,7 @@ keys -> sculpt_notes
 sculpt_notes -> out
 end
 )pulse" },
-        { "11 Temporal Smear", "Blend the present note with recent history for harmonic afterimages.", R"pulse(
-patch fibonacci_smear
+        { "11 Temporal Smear", "Blend the present note with recent history for harmonic afterimages.", R"pulse(patch fibonacci_smear
 
 clock metro
   every 1/16
@@ -1946,8 +1977,7 @@ notes1 -> bergson
 bergson -> out
 end
 )pulse" },
-        { "12 Warped Pitch Space", "Fold pitch neighborhoods and add wormholes before converting back to notes.", R"pulse(
-patch warped_pitch_space
+        { "12 Warped Pitch Space", "Fold pitch neighborhoods and add wormholes before converting back to notes.", R"pulse(patch warped_pitch_space
 
 clock metro
   every 1/16
@@ -1981,8 +2011,7 @@ warp1 -> notes1
 notes1 -> out
 end
 )pulse" },
-        { "13 Crystal Growth", "Grow harmony from ratio families and steer it with density and phrase targets.", R"pulse(
-patch crystal_growth
+        { "13 Crystal Growth", "Grow harmony from ratio families and steer it with density and phrase targets.", R"pulse(patch crystal_growth
 
 clock metro
   every 1/16
@@ -2027,8 +2056,7 @@ crystal.gate -> notes1.gate
 notes1 -> out
 end
 )pulse" },
-        { "14 Constraint Collapse", "Write named rule sets and let the melody break, reform, and follow section changes.", R"pulse(
-patch constraint_collapse
+        { "14 Constraint Collapse", "Write named rule sets and let the melody break, reform, and follow section changes.", R"pulse(patch constraint_collapse
 
 clock metro
   every 1/16
@@ -2080,8 +2108,7 @@ engine1 -> notes1
 notes1 -> out
 end
 )pulse" },
-        { "15 Complex Modulator", "Use Fabric's modulator for multi-channel staged control, per-stage modulation, and stage activity routing.", R"pulse(
-patch modulated_modulator
+        { "15 Complex Modulator", "Use Fabric's modulator for multi-channel staged control, per-stage modulation, and stage activity routing.", R"pulse(patch modulated_modulator
 
 clock metro
   every 1/16
@@ -2138,8 +2165,7 @@ mod1.ch1_s2_gate -> notes1.gate
 notes1 -> out
 end
 )pulse" },
-        { "16 Held Note Random", "Use the notes you are holding as the source for a random walk.", R"pulse(
-patch random_held_notes
+        { "16 Held Note Random", "Use the notes you are holding as the source for a random walk.", R"pulse(patch random_held_notes
 
 midi in keys
   channel 1
@@ -2172,8 +2198,7 @@ metro -> chance1.trigger
 chance1 -> notes1
 notes1 -> out
 )pulse" },
-        { "17 Section Form Control", "Drive harmony with named sections like verse, chorus, and bridge.", R"pulse(
-patch section_controlled
+        { "17 Section Form Control", "Drive harmony with named sections like verse, chorus, and bridge.", R"pulse(patch section_controlled
 
 clock metro
   every 1/16
@@ -2212,8 +2237,7 @@ form -> mover.phrase
 chords -> mover
 mover -> out
 )pulse" },
-        { "18 Phrase Guided Harmony", "Feed phrase targets into the projector so arrivals feel intentional.", R"pulse(
-patch phrase_guided_projector
+        { "18 Phrase Guided Harmony", "Feed phrase targets into the projector so arrivals feel intentional.", R"pulse(patch phrase_guided_projector
 
 clock metro
   every 1/16
@@ -2246,8 +2270,7 @@ roots -> mover
 plan -> mover.phrase
 mover -> out
 )pulse" },
-        { "19 Multi-Agent Swarm", "Let multiple simple agent roles negotiate the melodic output.", R"pulse(
-patch swarm_machine
+        { "19 Multi-Agent Swarm", "Let multiple simple agent roles negotiate the melodic output.", R"pulse(patch swarm_machine
 
 clock metro
   every 1/16
@@ -2279,8 +2302,7 @@ metro -> flock.trigger
 flock -> notes1
 notes1 -> out
 )pulse" },
-        { "20 Growth And Modulator", "Combine harmonic growth with staged modulation for dynamics and phrasing.", R"pulse(
-patch growth_modulator
+        { "20 Growth And Modulator", "Combine harmonic growth with staged modulation for dynamics and phrasing.", R"pulse(patch growth_modulator
 
 clock metro
   every 1/16
@@ -2335,8 +2357,7 @@ mod1.ch1 -> notes1.velocity
 mod1.ch2 -> notes1.time
 notes1 -> out
 )pulse" },
-        { "21 Modulator Stage Gates", "Use stage gate and end outputs as patch logic for other modules.", R"pulse(
-patch modulator_stage_gates
+        { "21 Modulator Stage Gates", "Use stage gate and end outputs as patch logic for other modules.", R"pulse(patch modulator_stage_gates
 
 clock metro
   every 1/16
@@ -2372,8 +2393,7 @@ mod1.ch1_s2_gate -> notes1.gate
 mod1.ch1 -> notes1.time
 notes1 -> out
 )pulse" },
-        { "22 CC Bit Glitch", "Target a controller lane with scoped bitwise processing.", R"pulse(
-patch cc_glitch
+        { "22 CC Bit Glitch", "Target a controller lane with scoped bitwise processing.", R"pulse(patch cc_glitch
 
 midi in keys
 end
@@ -2392,8 +2412,7 @@ end
 keys -> glitch_modwheel
 glitch_modwheel -> out
 )pulse" },
-        { "23 Loop Into Cut-Up", "Capture a phrase with a looper and recombine it with cut-up logic.", R"pulse(
-patch loop_into_cutup
+        { "23 Loop Into Cut-Up", "Capture a phrase with a looper and recombine it with cut-up logic.", R"pulse(patch loop_into_cutup
 
 midi in keys
   channel 1

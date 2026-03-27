@@ -70,10 +70,12 @@ private:
 
     class IoVisualiserComponent final : public juce::Component {
     public:
+        explicit IoVisualiserComponent(FabricAudioProcessorEditor& owner) : owner_(owner) {}
         void setSnapshot(FabricAudioProcessor::IoSnapshot snapshot);
         void paint(juce::Graphics&) override;
 
     private:
+        FabricAudioProcessorEditor& owner_;
         FabricAudioProcessor::IoSnapshot snapshot_;
     };
 
@@ -129,6 +131,7 @@ private:
     void loadPatchFromFile();
     void savePatchToFile();
     void rebuildTutorialBrowser();
+    void rebuildIoModuleBrowser();
     void updateTutorialSummary();
     void loadSelectedTutorial();
 
@@ -136,6 +139,7 @@ private:
     juce::Label titleLabel_;
     juce::Label stateSummaryLabel_;
     juce::ComboBox tutorialBox_;
+    juce::ComboBox ioModuleBox_;
     juce::TextButton tutorialLoadButton_ { "Load Lesson" };
     juce::TextButton loadButton_ { "Load" };
     juce::TextButton saveButton_ { "Save" };
@@ -152,7 +156,7 @@ private:
     juce::TextEditor lessonSummary_;
     juce::Viewport graphViewport_;
     GraphPreviewComponent graphPreview_ { *this };
-    IoVisualiserComponent ioVisualiser_;
+    IoVisualiserComponent ioVisualiser_ { *this };
     ModulatorInspectorComponent modulatorInspector_ { *this };
     std::vector<FabricAudioProcessor::UiDiagnostic> diagnostics_;
     FabricAudioProcessor::GraphSnapshot graphSnapshot_;
@@ -161,6 +165,7 @@ private:
     std::vector<FabricAudioProcessor::SectionControlSnapshot> sectionControls_;
     juce::StringArray tutorialNames_;
     int selectedTutorialIndex_ = 0;
+    juce::String selectedIoModuleName_;
     SectionPulseComponent sectionPulseOverlay_ { *this };
     juce::OwnedArray<juce::Label> sectionLabels_;
     juce::OwnedArray<juce::TextButton> sectionAdvanceButtons_;

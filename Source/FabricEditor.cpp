@@ -455,6 +455,7 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::mouseUp(const juce::Mous
         if (region.body.contains(event.getPosition())) {
             for (const auto& node : snapshot_.nodes) {
                 if (node.name == name && node.sourceLine > 0) {
+                    owner_.selectedIoModuleName_ = node.name;
                     if (node.kind == "modulator") {
                         owner_.focusModulator(node.name);
                     }
@@ -485,12 +486,32 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
     g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
     g.drawText("LIVE I/O", header.removeFromLeft(100), juce::Justification::centredLeft, true);
     g.setFont(juce::Font(juce::FontOptions(12.0f)));
-    g.drawText("Press Tab to return to the patch.", header, juce::Justification::centredRight, true);
+    const auto focusName = owner_.selectedIoModuleName_.isNotEmpty() ? owner_.selectedIoModuleName_ : juce::String("Whole Patch");
+    g.drawText("Focus: " + focusName + "  |  Press Tab to return to the patch.", header, juce::Justification::centredRight, true);
 
     bounds.removeFromTop(8);
     auto left = bounds.removeFromLeft(bounds.getWidth() / 2);
     bounds.removeFromLeft(14);
     auto right = bounds;
+
+    FabricAudioProcessor::IoSnapshot snapshot = snapshot_;
+    if (owner_.selectedIoModuleName_.isNotEmpty()) {
+        for (const auto& node : snapshot_.nodes) {
+            if (node.moduleName == owner_.selectedIoModuleName_) {
+                snapshot.incoming = node.incoming;
+                snapshot.outgoing = node.outgoing;
+                snapshot.incomingCount = node.incomingCount;
+                snapshot.outgoingCount = node.outgoingCount;
+                snapshot.incomingActiveCount = node.incomingActiveCount;
+                snapshot.outgoingActiveCount = node.outgoingActiveCount;
+                snapshot.incomingActive = node.incomingActive;
+                snapshot.outgoingActive = node.outgoingActive;
+                snapshot.incomingHistory = node.incomingHistory;
+                snapshot.outgoingHistory = node.outgoingHistory;
+                break;
+            }
+        }
+    }
 
     const auto drawLane = [&g](juce::Rectangle<int> laneBounds,
                                const juce::String& title,
@@ -615,8 +636,8 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
         }
     };
 
-    drawLane(left, "Incoming", snapshot_.incomingCount, snapshot_.incomingActiveCount, snapshot_.incomingHistory, snapshot_.incomingActive, snapshot_.incoming, familyColour("input"));
-    drawLane(right, "Outgoing", snapshot_.outgoingCount, snapshot_.outgoingActiveCount, snapshot_.outgoingHistory, snapshot_.outgoingActive, snapshot_.outgoing, familyColour("output"));
+    drawLane(left, "Incoming", snapshot.incomingCount, snapshot.incomingActiveCount, snapshot.incomingHistory, snapshot.incomingActive, snapshot.incoming, familyColour("input"));
+    drawLane(right, "Outgoing", snapshot.outgoingCount, snapshot.outgoingActiveCount, snapshot.outgoingHistory, snapshot.outgoingActive, snapshot.outgoing, familyColour("output"));
 }
 
 void FabricAudioProcessorEditor::ModulatorInspectorComponent::setSnapshots(std::vector<FabricAudioProcessor::ModulatorSnapshot> snapshots, juce::String inspectedModule)
@@ -833,6 +854,20 @@ FabricAudioProcessorEditor::FabricAudioProcessorEditor(FabricAudioProcessor& aud
     };
     addAndMakeVisible(tutorialBox_);
 
+    ioModuleBox_.setTextWhenNothingSelected("Whole Patch");
+    ioModuleBox_.setJustificationType(juce::Justification::centredLeft);
+    styleHeaderComboBox(ioModuleBox_);
+    ioModuleBox_.onChange = [this] {
+        const auto selected = ioModuleBox_.getSelectedItemIndex();
+        if (selected <= 0) {
+            selectedIoModuleName_.clear();
+        } else if (selected - 1 < static_cast<int>(ioSnapshot_.nodes.size())) {
+            selectedIoModuleName_ = ioSnapshot_.nodes[static_cast<std::size_t>(selected - 1)].moduleName;
+        }
+        ioVisualiser_.repaint();
+    };
+    addAndMakeVisible(ioModuleBox_);
+
     tutorialLoadButton_.setButtonText("Open Lesson");
     tutorialLoadButton_.onClick = [this] { loadSelectedTutorial(); };
     styleSecondaryButton(tutorialLoadButton_);
@@ -933,6 +968,7 @@ except velocity 120..127)", juce::dontSendNotification);
     editor_->addKeyListener(this);
     diagnosticsList_.addKeyListener(this);
     tutorialBox_.addKeyListener(this);
+    ioModuleBox_.addKeyListener(this);
     tutorialLoadButton_.addKeyListener(this);
     compileButton_.addKeyListener(this);
     clockModeButton_.addKeyListener(this);
@@ -940,6 +976,7 @@ except velocity 120..127)", juce::dontSendNotification);
     saveButton_.addKeyListener(this);
 
     rebuildTutorialBrowser();
+    rebuildIoModuleBrowser();
     refreshFromProcessor();
     applyViewMode();
     setSize(1110, 690);
@@ -1000,10 +1037,18 @@ void FabricAudioProcessorEditor::resized()
     auto controls = header.removeFromRight(804);
     controls = controls.withTrimmedTop((controls.getHeight() - controlHeight) / 2).withHeight(controlHeight);
 
-    tutorialBox_.setBounds(controls.removeFromLeft(224));
-    controls.removeFromLeft(10);
-    tutorialLoadButton_.setBounds(controls.removeFromLeft(132));
-    controls.removeFromLeft(14);
+    if (viewMode_ == ViewMode::io) {
+        ioModuleBox_.setBounds(controls.removeFromLeft(224));
+        controls.removeFromLeft(14);
+        tutorialBox_.setBounds({});
+        tutorialLoadButton_.setBounds({});
+    } else {
+        tutorialBox_.setBounds(controls.removeFromLeft(224));
+        controls.removeFromLeft(10);
+        tutorialLoadButton_.setBounds(controls.removeFromLeft(132));
+        controls.removeFromLeft(14);
+        ioModuleBox_.setBounds({});
+    }
     loadButton_.setBounds(controls.removeFromLeft(82));
     controls.removeFromLeft(8);
     saveButton_.setBounds(controls.removeFromLeft(82));
@@ -1097,6 +1142,7 @@ void FabricAudioProcessorEditor::timerCallback()
     } else {
         graphSnapshot_ = processor_.getGraphSnapshot();
         ioSnapshot_ = processor_.getIoSnapshot();
+        rebuildIoModuleBrowser();
         modulatorSnapshots_ = processor_.getModulatorSnapshots();
         updateStateTracking(graphSnapshot_);
         graphPreview_.setSnapshot(graphSnapshot_);
@@ -1210,6 +1256,27 @@ void FabricAudioProcessorEditor::rebuildTutorialBrowser()
     tutorialBox_.setSelectedItemIndex(selectedTutorialIndex_, juce::dontSendNotification);
 }
 
+void FabricAudioProcessorEditor::rebuildIoModuleBrowser()
+{
+    ioModuleBox_.clear(juce::dontSendNotification);
+    ioModuleBox_.addItem("Whole Patch", 1);
+
+    int selectedIndex = 0;
+    for (int index = 0; index < static_cast<int>(ioSnapshot_.nodes.size()); ++index) {
+        const auto& node = ioSnapshot_.nodes[static_cast<std::size_t>(index)];
+        ioModuleBox_.addItem(node.moduleName, index + 2);
+        if (node.moduleName == selectedIoModuleName_) {
+            selectedIndex = index + 1;
+        }
+    }
+
+    if (selectedIndex == 0 && selectedIoModuleName_.isNotEmpty()) {
+        selectedIoModuleName_.clear();
+    }
+
+    ioModuleBox_.setSelectedItemIndex(selectedIndex, juce::dontSendNotification);
+}
+
 void FabricAudioProcessorEditor::updateTutorialSummary()
 {
     auto tutorial = processor_.getTutorial(selectedTutorialIndex_);
@@ -1261,6 +1328,7 @@ void FabricAudioProcessorEditor::refreshFromProcessor()
     diagnosticsSummary_.setVisible(!diagnostics_.empty());
     graphSnapshot_ = processor_.getGraphSnapshot();
     ioSnapshot_ = processor_.getIoSnapshot();
+    rebuildIoModuleBrowser();
     modulatorSnapshots_ = processor_.getModulatorSnapshots();
     const auto inspectedStillExists = std::any_of(modulatorSnapshots_.begin(), modulatorSnapshots_.end(), [this](const auto& snapshot) {
         return snapshot.moduleName == inspectedModulatorName_;
@@ -1304,6 +1372,9 @@ void FabricAudioProcessorEditor::applyViewMode()
     if (editor_ != nullptr) {
         editor_->setVisible(showingEditor);
     }
+    tutorialBox_.setVisible(!showingIo);
+    tutorialLoadButton_.setVisible(!showingIo);
+    ioModuleBox_.setVisible(showingIo);
     graphViewport_.setVisible(showingEditor);
     diagnosticsList_.setVisible(showingEditor && !diagnostics_.empty());
     diagnosticsSummary_.setVisible(showingEditor && !diagnostics_.empty());

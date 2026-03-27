@@ -1,18 +1,16 @@
 # Fabric
 
-Fabric is a small, human-readable language for building modular musical systems inside a JUCE-based Audio Unit MIDI Effect plugin.
+Fabric is a small, human-readable language for building modular music systems inside a JUCE-based Audio Unit MIDI Effect plugin (VST3 and standalone also available but untested).
 
-It is not just a MIDI scripting language.
-
-It is a patch language for:
+It is a MIDI scripting language, but also a patch language for:
 
 - generating MIDI
 - transforming MIDI
 - extracting motion and structure from MIDI input
 - building modulation and control shapes
-- connecting generators, analyzers, and processors together in a modular way
+- connecting analysers, generators, and processors together
 
-The goal is to make strange and powerful musical systems readable as plain text.
+The goal is to make diverse, modular, mostly MIDI musical systems as readable as possible
 
 ## Surface Syntax
 

@@ -311,7 +311,7 @@ Fabric now supports three different levels of reuse:
 
 These let you write larger pieces without flattening everything into one long top-level patch.
 
-## Micro-Sampling And Minimal Tools
+## Micro-Scale Tools
 
 Fabric can now cover short-loop and micro-sampling (if connected to a sampler plugin) style work too.
 

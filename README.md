@@ -292,13 +292,11 @@ That patch says:
 
 - take live MIDI input
 - derive motion information from it
-- quantize it to a scale
+- quantise it to a scale
 - split it into note bands
 - delay the low notes
 - smear the middle notes through pitch memory
 - send the result out
-
-This is the level of readability the language should aim for.
 
 ## Reuse And Composition
 
@@ -311,11 +309,11 @@ Fabric now supports three different levels of reuse:
 - `module` / `use`
   - define a reusable local patch fragment and instantiate it many times with arguments
 
-That lets you write larger pieces without flattening everything into one long top-level patch.
+These let you write larger pieces without flattening everything into one long top-level patch.
 
 ## Micro-Sampling And Minimal Tools
 
-Fabric can now cover short-loop and micro-house style work too.
+Fabric can now cover short-loop and micro-sampling (if connected to a sampler plugin) style work too.
 
 - `groove`
   - repeating microtiming offsets
@@ -336,7 +334,7 @@ Useful example patches:
 
 ## Signal Types
 
-Fabric should have five core signal types.
+Fabric has five core signal types.
 
 ### `midi`
 
@@ -389,8 +387,8 @@ A musical pitch representation before final MIDI note output.
 
 This is useful when a process produces pitch-like motion that should later be:
 
-- quantized
-- harmonized
+- quantised
+- harmonised
 - projected into a scale
 - converted to MIDI note numbers
 
@@ -398,7 +396,7 @@ Keeping `pitch` separate from raw MIDI notes gives the language room for more ex
 
 ## Module Families
 
-The language becomes much clearer if each module belongs to a family with a musical purpose.
+Each module belongs to a family with a musical purpose.
 
 ## 1. `input`
 
@@ -500,7 +498,7 @@ It covers:
 - multi-stage envelopes
 - complex LFOs
 - voltage-style processors
-- MARF-style list traversal
+- Buchla MARF-style list traversal
 - interpolation between stored points
 
 Example:
@@ -643,11 +641,11 @@ midi out out
 end
 ```
 
-Version 1 only really needs `output midi`, but debug or monitor outputs can be added later.
+Versions 0.1 and 0.2 only really support `output midi`, but debug or monitor outputs could be added later.
 
 ## Syntax
 
-The syntax should feel like structured notes, not programming punctuation.
+To be added.
 
 ## Patch Structure
 
@@ -732,7 +730,7 @@ end
 
 ## Time
 
-Fabric should prefer musical time, but allow milliseconds where needed.
+Fabric prefers musical time, but allows milliseconds where needed.
 
 Supported forms:
 
@@ -745,11 +743,9 @@ Supported forms:
 - `3s`
 - `2m`
 
-This matters because your examples range from micro-timing to multi-minute modulation.
-
 ## Core Use Cases From Your Examples
 
-These examples define what the language should optimize for.
+These examples give an idea of what the language is optomised for:
 
 ## 1. Multi-Channel Stage Modulation
 
@@ -774,7 +770,7 @@ stages mod4
 end
 ```
 
-This means the language needs:
+Thus, the language needs:
 
 - channels
 - per-stage level, time, and curve
@@ -819,7 +815,7 @@ quantize lock
 end
 ```
 
-This should work for:
+This needs to work for:
 
 - MIDI note streams
 - unquantized sequences
@@ -851,11 +847,11 @@ pattern custom
 end
 ```
 
-This suggests algorithmic pattern modules should be plain and friendly, not math-heavy.
+Algorithmic pattern modules try be plainly readable and friendly, not maths-heavy.
 
 ## 6. MIDI Highpass and Lowpass Filters
 
-These should be musical filters for MIDI data, not audio filters.
+These are musical filters for MIDI data:
 
 Examples:
 
@@ -875,7 +871,7 @@ end
 
 ## 7. Bitwise MIDI Operations
 
-Fabric should allow low-level operations, but keep them readable and scoped.
+Fabric allows low-level operations, but tries to keep them readable and scoped.
 
 Example:
 
@@ -886,16 +882,16 @@ bits xor_vel
 end
 ```
 
-Version 1 should apply these only to well-defined fields:
+Versions 0.1 and 0.2 apply these only to well-defined fields:
 
 - note
 - velocity
 - cc value
 - channel
 
-Not arbitrary raw byte hacking.
+(not arbitrary raw byte hacking)
 
-## 8. Split MIDI Into Bands and Delay Each Band
+## 8. Split MIDI Into Bands and Separately Delay Each Band
 
 Example:
 
@@ -920,7 +916,7 @@ delay high_late
 end
 ```
 
-This implies:
+This requires:
 
 - named outputs
 - parallel routing
@@ -939,7 +935,7 @@ bounce ball
 end
 ```
 
-This is a temporal gesture processor:
+This needs a temporal gesture processor:
 
 - repeated events
 - changing spacing
@@ -959,7 +955,7 @@ loop phrase1
 end
 ```
 
-This means the language should distinguish:
+This requires the language to distinguish:
 
 - phrase loops
 - note loops
@@ -987,7 +983,7 @@ This requires:
 
 ## 12. Topological Pitch Space
 
-This is an advanced idea and probably not v1, but Fabric should leave room for it.
+Not yet fully implemented.
 
 Concept:
 
@@ -995,9 +991,11 @@ Concept:
 - transform it by folds and wormholes
 - map it back to notes later
 
-This likely belongs in `project` or in advanced `memory/project` modules rather than the core language syntax.
+This will probably belong in `project` or in advanced `memory/project` modules rather than the core language syntax.
 
 ## 13. Harmonic Crystal Growth
+
+After James Tenney.
 
 Example:
 
@@ -1011,7 +1009,7 @@ growth crystal
 end
 ```
 
-This introduces self-organizing harmony as a generator family.
+This introduces self-organising harmony as a generator family.
 
 ## 14. Multi-Agent MIDI Swarm
 
@@ -1034,7 +1032,7 @@ swarm voices
 end
 ```
 
-This belongs in the advanced generative layer.
+This is part of the advanced generative layer.
 
 ## 15. Constraint Collapse Engine
 
@@ -1052,7 +1050,7 @@ collapse engine1
 end
 ```
 
-This means Fabric should allow a readable rule syntax for some advanced generators.
+This leads Fabric to allow a readable rule syntax for some advanced generators.
 
 ## 16. Endless Cut-Up Sequencer
 
@@ -1074,7 +1072,7 @@ This adds:
 - probabilistic recombination
 - continuity constraints
 
-## 17. Voltage List Engine
+## 17. Voltage-style List Engine
 
 Example:
 
@@ -1093,13 +1091,8 @@ lists marf1
 end
 ```
 
-This is a major reason `shape` should be a top-level family.
+Requires `shape` to be a top-level family.
 
-## What Should Be In Version 1
-
-Fabric should start small, but not too small.
-
-The best v1 is the smallest language that still expresses your core practical ideas.
 
 ## V1 Signal Types
 
@@ -1172,22 +1165,10 @@ The best v1 is the smallest language that still expresses your core practical id
 
 That is already a powerful system.
 
-## What Should Wait Until Later
 
-These are exciting, but they should sit above the core until the runtime and syntax are stable:
+## Grammar
 
-- topological pitch space
-- harmonic crystal growth
-- swarm systems
-- constraint collapse
-- full cut-up fragment engines
-- richer memory recombination
-
-They should still influence the design, but not block the first implementation.
-
-## Suggested Grammar
-
-A simple block grammar is enough.
+A simple block grammar:
 
 ```text
 patch <name>
@@ -1211,7 +1192,7 @@ Where:
 
 ## Type Rules
 
-Connections should be checked at compile time.
+Connections are checked at compile time.
 
 Examples:
 
@@ -1223,7 +1204,7 @@ Examples:
 - `motion.speed` may output `value`
 - `motion.even` may output `gate`
 
-Bad connections should fail with readable errors:
+Bad connections fail with readable errors:
 
 ```text
 Cannot connect `metro` to `transpose1`.
@@ -1232,11 +1213,9 @@ Cannot connect `metro` to `transpose1`.
 
 ## Compile Model
 
-Fabric should be compiled before playback.
+Fabric compiles before playback and does not parse or interpret script text inside the audio callback.
 
-Do not parse or interpret script text inside the audio callback.
-
-The processing model should be:
+The processing model is:
 
 1. Parse source text into an AST.
 2. Validate module names, properties, and references.
@@ -1248,7 +1227,7 @@ The processing model should be:
 
 ## JUCE Runtime Model
 
-Inside a JUCE MIDI effect plugin, the architecture could look like:
+Inside a JUCE MIDI effect plugin, the architecture is something like:
 
 - `PulseLexer`
 - `PulseParser`
@@ -1273,7 +1252,7 @@ For each `processBlock`:
 
 ## Real-Time Safety Rules
 
-Fabric should be strict here:
+Fabric is strict in terms of:
 
 - no dynamic allocation in `processBlock`
 - no file IO in `processBlock`
@@ -1281,13 +1260,13 @@ Fabric should be strict here:
 - bounded per-block work
 - preallocated buffers for events and node state
 
-This matters because some modules, like loops or smears, can get heavy if not constrained.
+This matters because some modules, like loops or smears, are likely to get heavy if not constrained.
 
-## Error Style
+## Errors
 
-Errors should read like editor guidance, not compiler noise.
+Errors try to read like helpful/constructive editor guidance.
 
-Good examples:
+Examples:
 
 ```text
 Unknown module `bergon`.
@@ -1304,76 +1283,6 @@ Cannot connect `tracker.speed` to `split1`.
 `tracker.speed` outputs value, but `split` expects midi.
 ```
 
-## Why This Design Fits Your Goals
-
-It matches the examples directly:
-
-- staged slope systems live in `shape`
-- MIDI-derived motion lives in `analyze`
-- harmonic reinterpretation lives in `transform` and `project`
-- algorithmic series live in `generate`
-- memory and residue live in `memory`
-- practical MIDI tools stay simple in `transform`
-
-It also keeps the language readable:
-
-- short blocks
-- plain words
-- explicit routing
-- little punctuation
-- musical vocabulary
-
-And it is implementable inside JUCE:
-
-- fixed graph
-- typed connections
-- bounded runtime
-- deterministic scheduling
-
-## Final Recommendation
-
-Build Fabric as a small modular musical language, not as a general programming language and not as a narrow MIDI macro system.
-
-The identity should be:
-
-- text-based modular patching
-- strong support for MIDI analysis and generation
-- first-class modulation and staged control
-- a clean path from practical MIDI utilities to experimental composition systems
-
-If the language gets this part right, it can support everything from:
-
-- quantized live arps
-- MIDI band splitting and delays
-- bouncing ball gesture processors
-- looping and cut-up recombination
-- memory smears
-- MARF-like list engines
-- swarm and collapse generators
-
-without losing readability.
-
-## Best Next Step
-
-The strongest next implementation move is:
-
-1. lock the v1 syntax
-2. define AST structs in C++
-3. define the signal type system
-4. implement parser and validator
-5. implement a minimal runtime graph
-6. build these first nodes:
-   - `midi in`
-   - `clock`
-   - `stages`
-   - `quantize`
-   - `split`
-   - `delay`
-   - `arp`
-   - `midi out`
-7. add `analyze motion` immediately after
-
-That would give you a real prototype quickly while keeping the door open for the more radical modules later.
 # Tutorials
 
-Start with the guided lesson set in [tutorials/README.md](/Users/md/Downloads/plugin%20language/tutorials/README.md). It includes 15 progressive tutorials, from a first clocked pattern to growth, collapse, and the complex modulator.
+It's recommended to start with the guided lesson set in [tutorials/README.md](/Users/md/Downloads/plugin%20language/tutorials/README.md). It includes 15 progressive tutorials, from a first clocked pattern to growth, collapse, and the complex modulator.

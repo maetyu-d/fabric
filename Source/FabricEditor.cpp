@@ -46,21 +46,56 @@ juce::Colour familyColour(const juce::String& family)
     return juce::Colour::fromRGB(138, 136, 130);
 }
 
-bool isModuleFamily(const juce::String& token)
+struct DisplayModule {
+    juce::String family;
+    juce::String kind;
+    juce::String name;
+};
+
+std::optional<DisplayModule> inferDisplayModule(const juce::StringArray& tokens)
 {
-    return token == "input"
-        || token == "analyze"
-        || token == "generate"
-        || token == "shape"
-        || token == "transform"
-        || token == "memory"
-        || token == "project"
-        || token == "output";
+    if (tokens.size() >= 3 && tokens[0] == "midi") {
+        if (tokens[1] == "in") return DisplayModule { "input", "midi", tokens[2] };
+        if (tokens[1] == "out") return DisplayModule { "output", "midi", tokens[2] };
+    }
+
+    if (tokens.size() >= 2) {
+        const auto& head = tokens[0];
+        const auto& name = tokens[1];
+
+        if (head == "motion") return DisplayModule { "analyze", "motion", name };
+
+        if (head == "clock" || head == "pattern" || head == "fibonacci" || head == "random"
+            || head == "phrase" || head == "progression" || head == "growth" || head == "swarm"
+            || head == "collapse" || head == "section") {
+            return DisplayModule { "generate", head, name };
+        }
+
+        if (head == "stages" || head == "lists" || head == "modulator") {
+            return DisplayModule { "shape", head, name };
+        }
+
+        if (head == "quantize" || head == "split" || head == "delay" || head == "loop"
+            || head == "bounce" || head == "arp" || head == "warp" || head == "filter"
+            || head == "bits") {
+            return DisplayModule { "transform", head, name };
+        }
+
+        if (head == "smear" || head == "cutup") {
+            return DisplayModule { "memory", head, name };
+        }
+
+        if (head == "notes") {
+            return DisplayModule { "project", "to_notes", name };
+        }
+    }
+
+    return std::nullopt;
 }
 
 bool isGlobalDirective(const juce::String& token)
 {
-    return token == "patch" || token == "scale" || token == "tempo";
+    return token == "patch" || token == "scale" || token == "key" || token == "tempo";
 }
 
 juce::Colour directiveColour(const juce::String& token)
@@ -216,7 +251,7 @@ void FabricAudioProcessorEditor::ModuleOverlay::paint(juce::Graphics& g)
             continue;
         }
 
-        if (firstConnectLine < 0 && tokens[0] == "connect") {
+        if (firstConnectLine < 0 && tokens.size() == 3 && tokens[1] == "->") {
             firstConnectLine = lineIndex;
         }
 
@@ -225,16 +260,14 @@ void FabricAudioProcessorEditor::ModuleOverlay::paint(juce::Graphics& g)
         }
 
         if (!inModule) {
-            if (tokens.size() >= 2 && isModuleFamily(tokens[0])) {
+            if (const auto display = inferDisplayModule(tokens); display.has_value()) {
                 inModule = true;
                 current = {};
                 current.startLine = lineIndex;
                 current.endLine = lineIndex;
-                current.family = tokens[0];
-                current.kind = tokens[1];
-                if (tokens.size() >= 3) {
-                    current.name = tokens[2];
-                }
+                current.family = display->family;
+                current.kind = display->kind;
+                current.name = display->name;
             }
             continue;
         }
@@ -881,7 +914,12 @@ except velocity 120..127)", juce::dontSendNotification);
     lessonSummary_.setFont(juce::Font(juce::FontOptions("Menlo", 13.5f, juce::Font::plain)));
     addAndMakeVisible(lessonSummary_);
 
-    addAndMakeVisible(graphPreview_);
+    graphViewport_.setViewedComponent(&graphPreview_, false);
+    graphViewport_.setScrollBarsShown(true, false);
+    graphViewport_.setScrollBarThickness(10);
+    graphViewport_.setColour(juce::ScrollBar::thumbColourId, juce::Colour::fromRGB(76, 184, 235));
+    graphViewport_.setColour(juce::ScrollBar::trackColourId, juce::Colour::fromRGBA(255, 255, 255, 40));
+    addAndMakeVisible(graphViewport_);
     addAndMakeVisible(ioVisualiser_);
     addAndMakeVisible(modulatorInspector_);
     addAndMakeVisible(sectionPulseOverlay_);
@@ -1017,7 +1055,11 @@ void FabricAudioProcessorEditor::resized()
     editor_->setBounds(editorBounds);
     moduleOverlay_.setBounds(editor_->getLocalBounds());
     diagnosticOverlay_.setBounds(editor_->getLocalBounds());
-    graphPreview_.setBounds(layout.graphPanel.reduced(12, 30));
+    auto graphViewportBounds = layout.graphPanel.reduced(12, 30);
+    graphViewport_.setBounds(graphViewportBounds);
+    const auto graphContentHeight = juce::jmax(graphViewportBounds.getHeight(),
+        56 + static_cast<int>(graphSnapshot_.nodes.size()) * 80);
+    graphPreview_.setBounds(0, 0, graphViewportBounds.getWidth() - 10, graphContentHeight);
     ioVisualiser_.setBounds(contentUnion(layout).reduced(10, 10));
     lessonSummary_.setBounds(contentUnion(layout).reduced(22, 32));
 
@@ -1262,7 +1304,7 @@ void FabricAudioProcessorEditor::applyViewMode()
     if (editor_ != nullptr) {
         editor_->setVisible(showingEditor);
     }
-    graphPreview_.setVisible(showingEditor);
+    graphViewport_.setVisible(showingEditor);
     diagnosticsList_.setVisible(showingEditor && !diagnostics_.empty());
     diagnosticsSummary_.setVisible(showingEditor && !diagnostics_.empty());
     helpSummary_.setVisible(showingEditor && modulatorSnapshots_.empty());

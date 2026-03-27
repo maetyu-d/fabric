@@ -150,6 +150,7 @@ private:
     juce::TextEditor diagnosticsSummary_;
     juce::TextEditor helpSummary_;
     juce::TextEditor lessonSummary_;
+    juce::Viewport graphViewport_;
     GraphPreviewComponent graphPreview_ { *this };
     IoVisualiserComponent ioVisualiser_;
     ModulatorInspectorComponent modulatorInspector_ { *this };

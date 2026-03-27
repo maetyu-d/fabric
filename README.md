@@ -126,27 +126,6 @@ Fabric is designed around six goals:
 5. Make modular routing explicit and easy to follow.
 6. Stay small enough to implement without becoming a full general-purpose language.
 
-## The Core Shift
-
-The language should not think only in terms of "notes in, notes out."
-
-Your examples show that a useful system needs to work across several musical signal domains:
-
-- `midi`
-- `trigger`
-- `gate`
-- `value`
-- `pitch`
-
-That means the language must support modules that:
-
-- convert MIDI into control structure
-- derive gates or pulses from performance behavior
-- quantize continuous motion into harmonic pitch
-- split and merge event streams
-- store, reshape, and reinterpret musical memory
-
-This gives the language a modular-synth-like spirit while still living inside a MIDI plugin.
 
 ## What Fabric Is
 

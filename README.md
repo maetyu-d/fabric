@@ -10,7 +10,9 @@ Fabric is a small, human-readable patch language for building modular MIDI music
 - building modulation and control shapes
 - connecting together analysers, generators, and processors
 
-The aim is to make diverse, modular, (mostly) MIDI musical systems as easily (human) readable as possible
+The aim is to make diverse, modular, (mostly) MIDI musical systems as easily (human) readable as possible. There's a handy visuualiser too (press Tab to access).
+
+![](https://github.com/maetyu-d/fabric/blob/main/Screenshot%202026-03-27%20at%2010.40.47.png?raw=true)
 
 ## Design Goals
 

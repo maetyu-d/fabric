@@ -1,0 +1,52 @@
+patch micro_slice_pool
+
+clock source_clock
+  every 1/16
+end
+
+clock play_clock
+  every 1/8
+end
+
+pattern riff
+  notes C3 D3 G3 Bb3
+  order up_down
+end
+
+notes source
+  quantize C minor
+  gate 62%
+  velocity 96
+end
+
+slicer cuts
+  capture 1/4
+  slices 8
+  drift start 4ms
+  drift size 3ms
+  reverse 25%
+  seed 12
+end
+
+pool seqcuts
+  capture 1/4
+  slices 8
+  steps 0 0 3 1 4 2 6 5
+  drift start 2ms
+  drift size 2ms
+  reverse on
+  seed 8
+end
+
+midi out out
+end
+
+source_clock -> riff.trigger
+riff -> source
+source -> cuts
+source -> seqcuts
+play_clock -> cuts.trigger
+play_clock -> seqcuts.trigger
+cuts -> out
+seqcuts -> out
+end

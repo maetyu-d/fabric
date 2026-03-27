@@ -8,6 +8,21 @@ namespace pulse {
 
 namespace {
 
+SignalType signalTypeProperty(const Module& module)
+{
+    for (const auto& property : module.properties) {
+        if (property.key != "signal" || property.values.empty()) {
+            continue;
+        }
+        if (property.values[0] == "midi") return SignalType::midi;
+        if (property.values[0] == "trigger") return SignalType::trigger;
+        if (property.values[0] == "gate") return SignalType::gate;
+        if (property.values[0] == "value") return SignalType::value;
+        if (property.values[0] == "pitch") return SignalType::pitch;
+    }
+    return SignalType::unknown;
+}
+
 PortInfo makePort(std::string name, SignalType type)
 {
     return PortInfo { std::move(name), type };
@@ -23,13 +38,17 @@ std::vector<PortInfo> defaultInputs(const Module& module)
     }
 
     if (module.family == ModuleFamily::generate && module.kind == "clock") return {};
-    if (module.family == ModuleFamily::generate && (module.kind == "pattern" || module.kind == "fibonacci" || module.kind == "phrase" || module.kind == "progression" || module.kind == "growth" || module.kind == "swarm" || module.kind == "collapse")) {
+    if (module.family == ModuleFamily::generate && (module.kind == "pattern" || module.kind == "fibonacci" || module.kind == "phrase" || module.kind == "progression" || module.kind == "growth" || module.kind == "swarm" || module.kind == "collapse" || module.kind == "field" || module.kind == "formula" || module.kind == "moment" || module.kind == "table" || module.kind == "markov" || module.kind == "tree")) {
         if (module.kind == "growth") {
             return { makePort("trigger", SignalType::trigger), makePort("phrase", SignalType::value) };
         }
         if (module.kind == "collapse") {
             return { makePort("trigger", SignalType::trigger), makePort("phrase", SignalType::value), makePort("section", SignalType::value) };
         }
+        return { makePort("trigger", SignalType::trigger) };
+    }
+
+    if (module.family == ModuleFamily::generate && module.kind == "chance") {
         return { makePort("trigger", SignalType::trigger) };
     }
 
@@ -90,8 +109,25 @@ std::vector<PortInfo> defaultInputs(const Module& module)
         return { makePort("in", SignalType::midi), makePort("pitch", SignalType::pitch), makePort("values", SignalType::value) };
     }
 
+    if (module.family == ModuleFamily::transform && module.kind == "passthrough") {
+        return { makePort("in", signalTypeProperty(module)) };
+    }
+
+    if (module.family == ModuleFamily::transform && module.kind == "sieve") {
+        return { makePort("pitch", SignalType::pitch), makePort("trigger", SignalType::trigger) };
+    }
+
     if (module.family == ModuleFamily::transform && module.kind == "warp") {
         return { makePort("pitch", SignalType::pitch), makePort("values", SignalType::value) };
+    }
+
+    if (module.family == ModuleFamily::transform && module.kind == "equation") {
+        return {
+            makePort("in", SignalType::midi),
+            makePort("trigger", SignalType::trigger),
+            makePort("value", SignalType::value),
+            makePort("pitch", SignalType::pitch)
+        };
     }
 
     if (module.family == ModuleFamily::transform && module.kind == "split") {
@@ -102,11 +138,19 @@ std::vector<PortInfo> defaultInputs(const Module& module)
         return { makePort("in", SignalType::midi), makePort("trigger", SignalType::trigger) };
     }
 
+    if (module.family == ModuleFamily::transform && (module.kind == "groove" || module.kind == "retrig" || module.kind == "length")) {
+        return { makePort("in", SignalType::midi) };
+    }
+
     if (module.family == ModuleFamily::memory && module.kind == "smear") {
         return { makePort("in", SignalType::midi), makePort("drift", SignalType::value) };
     }
 
     if (module.family == ModuleFamily::memory && module.kind == "cutup") {
+        return { makePort("in", SignalType::midi), makePort("trigger", SignalType::trigger) };
+    }
+
+    if (module.family == ModuleFamily::memory && (module.kind == "slicer" || module.kind == "pool")) {
         return { makePort("in", SignalType::midi), makePort("trigger", SignalType::trigger) };
     }
 
@@ -136,11 +180,80 @@ std::vector<PortInfo> defaultOutputs(const Module& module)
     }
 
     if (module.family == ModuleFamily::generate && module.kind == "clock") {
-        return { makePort("out", SignalType::trigger) };
+        return {
+            makePort("out", SignalType::trigger),
+            makePort("beat", SignalType::trigger),
+            makePort("bar", SignalType::trigger),
+            makePort("accent", SignalType::value)
+        };
     }
 
     if (module.family == ModuleFamily::generate && (module.kind == "pattern" || module.kind == "fibonacci" || module.kind == "random")) {
         return { makePort("out", SignalType::pitch) };
+    }
+
+    if (module.family == ModuleFamily::generate && module.kind == "chance") {
+        return {
+            makePort("out", SignalType::value),
+            makePort("pitch", SignalType::pitch),
+            makePort("trigger", SignalType::trigger),
+            makePort("index", SignalType::value)
+        };
+    }
+
+    if (module.family == ModuleFamily::generate && module.kind == "field") {
+        return {
+            makePort("out", SignalType::pitch),
+            makePort("density", SignalType::value)
+        };
+    }
+
+    if (module.family == ModuleFamily::generate && module.kind == "formula") {
+        return {
+            makePort("out", SignalType::pitch),
+            makePort("gate", SignalType::gate),
+            makePort("time", SignalType::value),
+            makePort("step", SignalType::value)
+        };
+    }
+
+    if (module.family == ModuleFamily::generate && module.kind == "moment") {
+        return {
+            makePort("out", SignalType::pitch),
+            makePort("state", SignalType::value)
+        };
+    }
+
+    if (module.family == ModuleFamily::generate && module.kind == "table") {
+        return {
+            makePort("out", SignalType::value),
+            makePort("pitch", SignalType::pitch),
+            makePort("time", SignalType::value),
+            makePort("gate", SignalType::gate),
+            makePort("index", SignalType::value),
+            makePort("trigger", SignalType::trigger)
+        };
+    }
+
+    if (module.family == ModuleFamily::generate && module.kind == "markov") {
+        return {
+            makePort("value", SignalType::value),
+            makePort("out", SignalType::pitch),
+            makePort("time", SignalType::value),
+            makePort("gate", SignalType::gate),
+            makePort("state", SignalType::value)
+        };
+    }
+
+    if (module.family == ModuleFamily::generate && module.kind == "tree") {
+        return {
+            makePort("out", SignalType::value),
+            makePort("pitch", SignalType::pitch),
+            makePort("time", SignalType::value),
+            makePort("gate", SignalType::gate),
+            makePort("index", SignalType::value),
+            makePort("trigger", SignalType::trigger)
+        };
     }
 
     if (module.family == ModuleFamily::generate && module.kind == "growth") {
@@ -213,14 +326,34 @@ std::vector<PortInfo> defaultOutputs(const Module& module)
         };
     }
 
+    if (module.family == ModuleFamily::transform && (module.kind == "groove" || module.kind == "retrig" || module.kind == "length")) {
+        return { makePort("out", SignalType::midi) };
+    }
+
     if (module.family == ModuleFamily::output) return {};
 
     if (module.family == ModuleFamily::transform && module.kind == "quantize") {
         return { makePort("out", SignalType::midi), makePort("pitch", SignalType::pitch) };
     }
 
+    if (module.family == ModuleFamily::transform && module.kind == "passthrough") {
+        return { makePort("out", signalTypeProperty(module)) };
+    }
+
+    if (module.family == ModuleFamily::transform && module.kind == "sieve") {
+        return { makePort("out", SignalType::pitch), makePort("trigger", SignalType::trigger) };
+    }
+
     if (module.family == ModuleFamily::transform && module.kind == "warp") {
         return { makePort("out", SignalType::pitch) };
+    }
+
+    if (module.family == ModuleFamily::transform && module.kind == "equation") {
+        return {
+            makePort("out", SignalType::midi),
+            makePort("value", SignalType::value),
+            makePort("pitch", SignalType::pitch)
+        };
     }
 
     if (module.family == ModuleFamily::transform && module.kind == "filter") {
@@ -253,6 +386,10 @@ std::vector<PortInfo> defaultOutputs(const Module& module)
 
     if (module.family == ModuleFamily::memory && module.kind == "cutup") {
         return { makePort("out", SignalType::midi) };
+    }
+
+    if (module.family == ModuleFamily::memory && (module.kind == "slicer" || module.kind == "pool")) {
+        return { makePort("out", SignalType::midi), makePort("index", SignalType::value) };
     }
 
     return { makePort("out", SignalType::midi) };

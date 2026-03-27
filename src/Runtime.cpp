@@ -17,6 +17,115 @@ double clamp01(double value)
     return std::clamp(value, 0.0, 1.0);
 }
 
+constexpr double kPi = 3.14159265358979323846;
+
+enum class DistributionKind {
+    uniform,
+    gaussian,
+    poisson,
+    brownian,
+    burst
+};
+
+struct DistributionConfig {
+    DistributionKind kind = DistributionKind::uniform;
+    double lambda = 3.0;
+    double burst = 0.6;
+};
+
+std::optional<std::string> findPropertyValue(const Module& module, const std::string& key);
+
+DistributionKind parseDistributionKind(const std::string& value)
+{
+    if (value == "gaussian") return DistributionKind::gaussian;
+    if (value == "poisson") return DistributionKind::poisson;
+    if (value == "brownian") return DistributionKind::brownian;
+    if (value == "burst") return DistributionKind::burst;
+    return DistributionKind::uniform;
+}
+
+DistributionConfig parseDistributionConfig(const Module& module)
+{
+    DistributionConfig config;
+    if (const auto distribution = findPropertyValue(module, "distribution")) {
+        config.kind = parseDistributionKind(*distribution);
+    }
+    if (const auto lambda = findPropertyValue(module, "lambda")) {
+        config.lambda = std::max(0.1, std::stod(*lambda));
+    }
+    if (const auto burst = findPropertyValue(module, "burst")) {
+        config.burst = std::clamp(std::stod(*burst), 0.0, 0.98);
+    }
+    return config;
+}
+
+template <typename NextUnitFn>
+double gaussianSample(NextUnitFn&& nextUnit)
+{
+    const auto u1 = std::max(1.0e-6, nextUnit());
+    const auto u2 = std::max(1.0e-6, nextUnit());
+    return std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * kPi * u2);
+}
+
+template <typename NextUnitFn>
+int poissonSample(double lambda, NextUnitFn&& nextUnit)
+{
+    const auto limit = std::exp(-std::max(0.1, lambda));
+    double product = 1.0;
+    int count = 0;
+    do {
+        ++count;
+        product *= std::max(1.0e-6, nextUnit());
+    } while (product > limit && count < 64);
+    return std::max(0, count - 1);
+}
+
+template <typename NextUnitFn>
+double distributionPhase01(const DistributionConfig& config, double& memory, NextUnitFn&& nextUnit)
+{
+    switch (config.kind) {
+    case DistributionKind::gaussian:
+        return clamp01(0.5 + (gaussianSample(nextUnit) * 0.18));
+    case DistributionKind::poisson: {
+        const auto sample = static_cast<double>(poissonSample(config.lambda, nextUnit));
+        return clamp01(sample / std::max(1.0, config.lambda * 3.0));
+    }
+    case DistributionKind::brownian:
+        memory = clamp01(memory + (gaussianSample(nextUnit) * 0.12));
+        return memory;
+    case DistributionKind::burst:
+        memory = clamp01((memory * config.burst) + 0.5 + (gaussianSample(nextUnit) * 0.10));
+        return memory;
+    case DistributionKind::uniform:
+    default:
+        memory = nextUnit();
+        return memory;
+    }
+}
+
+template <typename NextUnitFn>
+double distributionOffset(const DistributionConfig& config, double spread, double& memory, NextUnitFn&& nextUnit)
+{
+    switch (config.kind) {
+    case DistributionKind::gaussian:
+        return std::clamp(gaussianSample(nextUnit) * std::max(0.5, spread * 0.33), -spread, spread);
+    case DistributionKind::poisson: {
+        const auto centered = static_cast<double>(poissonSample(config.lambda, nextUnit)) - config.lambda;
+        return std::clamp(centered / std::max(1.0, config.lambda) * std::max(0.5, spread * 0.45), -spread, spread);
+    }
+    case DistributionKind::brownian:
+        memory = std::clamp(memory + (gaussianSample(nextUnit) * std::max(0.35, spread * 0.12)), -spread, spread);
+        return memory;
+    case DistributionKind::burst:
+        memory = std::clamp((memory * config.burst) + (gaussianSample(nextUnit) * std::max(0.25, spread * 0.10)), -spread, spread);
+        return memory;
+    case DistributionKind::uniform:
+    default:
+        memory = (nextUnit() * 2.0 - 1.0) * spread;
+        return memory;
+    }
+}
+
 double applyCurve(const std::string& curve, double t)
 {
     t = clamp01(t);
@@ -205,8 +314,59 @@ std::vector<int> parsePitchList(const std::vector<std::string>& values)
     return result;
 }
 
+double parseChoiceScalar(const std::string& token)
+{
+    if (token.empty()) return 0.0;
+    if (std::isdigit(static_cast<unsigned char>(token.front())) != 0 || token.front() == '-' || token.front() == '+') {
+        return std::stod(token);
+    }
+    return static_cast<double>(parseNoteName(token));
+}
+
+double parseGateScalar(const std::string& token)
+{
+    if (token == "on" || token == "yes" || token == "true") return 1.0;
+    if (token == "off" || token == "no" || token == "false") return 0.0;
+    if (!token.empty() && token.back() == '%') {
+        return clamp01(std::stod(token.substr(0, token.size() - 1)) / 100.0);
+    }
+    return clamp01(parseChoiceScalar(token));
+}
+
+template <typename NextUnitFn>
+std::size_t weightedIndex(const std::vector<double>& weights, NextUnitFn&& nextUnit)
+{
+    if (weights.empty()) {
+        return 0;
+    }
+
+    double total = 0.0;
+    for (const auto weight : weights) {
+        total += std::max(0.01, weight);
+    }
+
+    auto choice = nextUnit() * total;
+    for (std::size_t index = 0; index < weights.size(); ++index) {
+        choice -= std::max(0.01, weights[index]);
+        if (choice <= 0.0) {
+            return index;
+        }
+    }
+
+    return weights.size() - 1;
+}
+
 std::vector<double> parseGroovePattern(const std::vector<std::string>& values)
 {
+    if (values.size() == 1) {
+        const auto name = values.front();
+        if (name == "straight") return { 1.0, 1.0, 1.0, 1.0 };
+        if (name == "shuffle") return { 1.14, 0.86, 1.14, 0.86 };
+        if (name == "push") return { 0.92, 1.08, 0.94, 1.06 };
+        if (name == "lag") return { 1.08, 0.92, 1.06, 0.94 };
+        if (name == "machine") return { 1.00, 0.94, 1.10, 0.96 };
+    }
+
     std::vector<double> pattern;
     for (const auto& value : values) {
         double parsed = std::stod(value);
@@ -216,6 +376,301 @@ std::vector<double> parseGroovePattern(const std::vector<std::string>& values)
         pattern.push_back(std::max(0.05, parsed));
     }
     return pattern;
+}
+
+std::string joinTokens(const std::vector<std::string>& values, std::size_t startIndex = 0)
+{
+    std::string result;
+    for (std::size_t i = startIndex; i < values.size(); ++i) {
+        if (!result.empty()) {
+            result += ' ';
+        }
+        result += values[i];
+    }
+    return result;
+}
+
+struct ExprNode {
+    enum class Kind {
+        number,
+        variable,
+        unary,
+        binary,
+        call
+    };
+
+    Kind kind = Kind::number;
+    double number = 0.0;
+    std::string text;
+    std::vector<std::unique_ptr<ExprNode>> args;
+};
+
+class ExpressionParser {
+public:
+    explicit ExpressionParser(std::string text)
+        : text_(std::move(text))
+    {
+    }
+
+    std::unique_ptr<ExprNode> parse()
+    {
+        auto trimmed = text_;
+        trimmed.erase(trimmed.begin(), std::find_if(trimmed.begin(), trimmed.end(), [](unsigned char ch) {
+            return !std::isspace(ch);
+        }));
+        if (!trimmed.empty() && trimmed.front() == '=') {
+            trimmed.erase(trimmed.begin());
+        }
+        text_ = trimmed;
+        pos_ = 0;
+        auto node = parseExpression();
+        skipSpace();
+        if (pos_ != text_.size()) {
+            return {};
+        }
+        return node;
+    }
+
+private:
+    std::unique_ptr<ExprNode> parseExpression()
+    {
+        auto node = parseTerm();
+        while (node) {
+            skipSpace();
+            if (match('+') || match('-')) {
+                const auto op = text_[pos_ - 1];
+                auto rhs = parseTerm();
+                if (!rhs) return {};
+                auto combined = std::make_unique<ExprNode>();
+                combined->kind = ExprNode::Kind::binary;
+                combined->text = std::string(1, op);
+                combined->args.push_back(std::move(node));
+                combined->args.push_back(std::move(rhs));
+                node = std::move(combined);
+            } else {
+                break;
+            }
+        }
+        return node;
+    }
+
+    std::unique_ptr<ExprNode> parseTerm()
+    {
+        auto node = parsePower();
+        while (node) {
+            skipSpace();
+            if (match('*') || match('/') || match('%')) {
+                const auto op = text_[pos_ - 1];
+                auto rhs = parsePower();
+                if (!rhs) return {};
+                auto combined = std::make_unique<ExprNode>();
+                combined->kind = ExprNode::Kind::binary;
+                combined->text = std::string(1, op);
+                combined->args.push_back(std::move(node));
+                combined->args.push_back(std::move(rhs));
+                node = std::move(combined);
+            } else {
+                break;
+            }
+        }
+        return node;
+    }
+
+    std::unique_ptr<ExprNode> parsePower()
+    {
+        auto node = parseUnary();
+        while (node) {
+            skipSpace();
+            if (!match('^')) break;
+            auto rhs = parseUnary();
+            if (!rhs) return {};
+            auto combined = std::make_unique<ExprNode>();
+            combined->kind = ExprNode::Kind::binary;
+            combined->text = "^";
+            combined->args.push_back(std::move(node));
+            combined->args.push_back(std::move(rhs));
+            node = std::move(combined);
+        }
+        return node;
+    }
+
+    std::unique_ptr<ExprNode> parseUnary()
+    {
+        skipSpace();
+        if (match('+') || match('-')) {
+            const auto op = text_[pos_ - 1];
+            auto node = parseUnary();
+            if (!node) return {};
+            auto unary = std::make_unique<ExprNode>();
+            unary->kind = ExprNode::Kind::unary;
+            unary->text = std::string(1, op);
+            unary->args.push_back(std::move(node));
+            return unary;
+        }
+        return parsePrimary();
+    }
+
+    std::unique_ptr<ExprNode> parsePrimary()
+    {
+        skipSpace();
+        if (match('(')) {
+            auto node = parseExpression();
+            skipSpace();
+            if (!match(')')) return {};
+            return node;
+        }
+
+        if (pos_ < text_.size() && (std::isdigit(static_cast<unsigned char>(text_[pos_])) || text_[pos_] == '.')) {
+            return parseNumber();
+        }
+
+        if (pos_ < text_.size() && (std::isalpha(static_cast<unsigned char>(text_[pos_])) || text_[pos_] == '_')) {
+            auto ident = parseIdentifier();
+            if (ident.empty()) return {};
+            skipSpace();
+            if (!match('(')) {
+                auto variable = std::make_unique<ExprNode>();
+                variable->kind = ExprNode::Kind::variable;
+                variable->text = ident;
+                return variable;
+            }
+
+            auto call = std::make_unique<ExprNode>();
+            call->kind = ExprNode::Kind::call;
+            call->text = ident;
+            skipSpace();
+            if (match(')')) {
+                return call;
+            }
+
+            while (true) {
+                auto arg = parseExpression();
+                if (!arg) return {};
+                call->args.push_back(std::move(arg));
+                skipSpace();
+                if (match(')')) {
+                    break;
+                }
+                if (!match(',')) return {};
+            }
+            return call;
+        }
+
+        return {};
+    }
+
+    std::unique_ptr<ExprNode> parseNumber()
+    {
+        const auto start = pos_;
+        bool seenDot = false;
+        while (pos_ < text_.size()) {
+            const auto ch = text_[pos_];
+            if (std::isdigit(static_cast<unsigned char>(ch))) {
+                ++pos_;
+                continue;
+            }
+            if (ch == '.' && !seenDot) {
+                seenDot = true;
+                ++pos_;
+                continue;
+            }
+            break;
+        }
+
+        auto node = std::make_unique<ExprNode>();
+        node->kind = ExprNode::Kind::number;
+        node->number = std::stod(text_.substr(start, pos_ - start));
+        return node;
+    }
+
+    std::string parseIdentifier()
+    {
+        const auto start = pos_;
+        while (pos_ < text_.size()) {
+            const auto ch = text_[pos_];
+            if (std::isalnum(static_cast<unsigned char>(ch)) || ch == '_') {
+                ++pos_;
+            } else {
+                break;
+            }
+        }
+        return text_.substr(start, pos_ - start);
+    }
+
+    void skipSpace()
+    {
+        while (pos_ < text_.size() && std::isspace(static_cast<unsigned char>(text_[pos_])) != 0) {
+            ++pos_;
+        }
+    }
+
+    bool match(char ch)
+    {
+        skipSpace();
+        if (pos_ < text_.size() && text_[pos_] == ch) {
+            ++pos_;
+            return true;
+        }
+        return false;
+    }
+
+    std::string text_;
+    std::size_t pos_ = 0;
+};
+
+double evaluateExpression(const ExprNode* node, const std::unordered_map<std::string, double>& vars)
+{
+    if (!node) return 0.0;
+
+    switch (node->kind) {
+    case ExprNode::Kind::number:
+        return node->number;
+    case ExprNode::Kind::variable: {
+        if (node->text == "pi") return kPi;
+        const auto it = vars.find(node->text);
+        return it != vars.end() ? it->second : 0.0;
+    }
+    case ExprNode::Kind::unary: {
+        const auto value = evaluateExpression(node->args.front().get(), vars);
+        return node->text == "-" ? -value : value;
+    }
+    case ExprNode::Kind::binary: {
+        const auto left = evaluateExpression(node->args[0].get(), vars);
+        const auto right = evaluateExpression(node->args[1].get(), vars);
+        if (node->text == "+") return left + right;
+        if (node->text == "-") return left - right;
+        if (node->text == "*") return left * right;
+        if (node->text == "/") return std::abs(right) < 1.0e-9 ? 0.0 : left / right;
+        if (node->text == "%") return std::abs(right) < 1.0e-9 ? 0.0 : std::fmod(left, right);
+        if (node->text == "^") return std::pow(left, right);
+        return 0.0;
+    }
+    case ExprNode::Kind::call: {
+        const auto arg = [&](std::size_t index, double fallback = 0.0) {
+            return index < node->args.size() ? evaluateExpression(node->args[index].get(), vars) : fallback;
+        };
+        if (node->text == "sin") return std::sin(arg(0));
+        if (node->text == "cos") return std::cos(arg(0));
+        if (node->text == "tan") return std::tan(arg(0));
+        if (node->text == "abs") return std::abs(arg(0));
+        if (node->text == "sqrt") return std::sqrt(std::max(0.0, arg(0)));
+        if (node->text == "floor") return std::floor(arg(0));
+        if (node->text == "ceil") return std::ceil(arg(0));
+        if (node->text == "round") return std::round(arg(0));
+        if (node->text == "min") return std::min(arg(0), arg(1));
+        if (node->text == "max") return std::max(arg(0), arg(1));
+        if (node->text == "clamp") return std::clamp(arg(0), arg(1), arg(2));
+        return 0.0;
+    }
+    }
+
+    return 0.0;
+}
+
+std::unique_ptr<ExprNode> parseEquationExpression(const std::vector<std::string>& values)
+{
+    auto parser = ExpressionParser(joinTokens(values));
+    return parser.parse();
 }
 
 class InputMidiNode final : public RuntimeNode {
@@ -382,6 +837,45 @@ public:
             ratchet_ = std::clamp(std::stoi(*ratchet), 1, 8);
         }
         groovePattern_ = parseGroovePattern(findPropertyValues(module, "groove"));
+        if (const auto tuplet = findPropertyValue(module, "tuplet")) {
+            const auto separator = tuplet->find(':');
+            if (separator != std::string::npos) {
+                const auto a = std::max(1, std::stoi(tuplet->substr(0, separator)));
+                const auto b = std::max(1, std::stoi(tuplet->substr(separator + 1)));
+                tupletRatio_ = static_cast<double>(b) / static_cast<double>(a);
+            } else {
+                const auto n = std::max(1, std::stoi(*tuplet));
+                tupletRatio_ = 2.0 / static_cast<double>(n);
+            }
+        }
+        if (const auto chance = findPropertyValue(module, "chance")) {
+            stepChance_ = parseProbability(*chance);
+        }
+        if (const auto pulseChance = findPropertyValues(module, "pulse"); pulseChance.size() >= 2 && pulseChance[0] == "chance") {
+            pulseChance_ = parseProbability(pulseChance[1]);
+        }
+        if (const auto bars = findPropertyValue(module, "bars")) {
+            beatsPerBar_ = std::clamp(std::stoi(*bars), 1, 16);
+        }
+        accentPattern_ = parseAccentPattern(findPropertyValues(module, "accents"));
+        if (const auto accent = findPropertyValues(module, "accent"); !accent.empty()) {
+            const auto parsed = parseAccentPattern(accent);
+            if (!parsed.empty()) {
+                accentPattern_ = parsed;
+            }
+        }
+        if (const auto ratchetPattern = findPropertyValues(module, "ratchet"); ratchetPattern.size() >= 2) {
+            ratchetPattern_.reserve(ratchetPattern.size());
+            for (const auto& token : ratchetPattern) {
+                ratchetPattern_.push_back(std::clamp(std::stoi(token), 1, 8));
+            }
+            if (!ratchetPattern_.empty()) {
+                ratchet_ = ratchetPattern_.front();
+            }
+        }
+        if (const auto seed = findPropertyValue(module, "seed")) {
+            seed_ = state_ = static_cast<std::uint32_t>(std::stoul(*seed));
+        }
     }
 
     void reset(double sampleRate) override
@@ -392,6 +886,7 @@ public:
         nextTriggerBeats_ = 0.0;
         stepIndex_ = 0;
         syncArmed_ = false;
+        state_ = seed_;
     }
 
     void process(const ProcessContext& context,
@@ -422,7 +917,7 @@ public:
 
             while (nextTriggerBeats_ <= endBeat + 1.0e-9) {
                 const auto stepDurationBeats = stepDurationSeconds(interval, context.bpm) / beatLengthSeconds;
-                emitRatchets(*out->second, nextTriggerBeats_, startBeat, beatLengthSeconds, stepDurationBeats);
+                emitStep(outputs, nextTriggerBeats_, startBeat, beatLengthSeconds, stepDurationBeats, true, beatLengthSeconds);
                 nextTriggerBeats_ += stepDurationBeats;
                 ++stepIndex_;
             }
@@ -438,7 +933,7 @@ public:
 
         while (nextTriggerSeconds_ <= end + 1.0e-9) {
             const auto stepDuration = stepDurationSeconds(interval, context.bpm);
-            emitRatchets(*out->second, nextTriggerSeconds_, start, 1.0, stepDuration);
+            emitStep(outputs, nextTriggerSeconds_, start, 1.0, stepDuration, false, 60.0 / std::max(context.bpm, 1.0));
             nextTriggerSeconds_ += stepDuration;
             ++stepIndex_;
         }
@@ -472,19 +967,122 @@ private:
     [[nodiscard]] double stepDurationSeconds(double baseInterval, double bpm) const
     {
         (void)bpm;
-        return std::max(1.0e-6, baseInterval * swingMultiplier() * grooveMultiplier());
+        return std::max(1.0e-6, baseInterval * swingMultiplier() * grooveMultiplier() * tupletRatio_);
     }
 
-    void emitRatchets(EventBuffer& out, double stepStart, double blockStart, double unitSeconds, double stepDuration) const
+    void emitStep(std::unordered_map<std::string, EventBuffer*>& outputs,
+        double stepStart,
+        double blockStart,
+        double unitSeconds,
+        double stepDuration,
+        bool beatSpace,
+        double beatLengthSeconds)
     {
-        const auto spacing = stepDuration / static_cast<double>(ratchet_);
-        for (int index = 0; index < ratchet_; ++index) {
+        if (!passesChance(stepChance_)) {
+            return;
+        }
+
+        const auto ratchetCount = currentRatchetCount();
+        const auto spacing = stepDuration / static_cast<double>(ratchetCount);
+        const auto accentValue = currentAccent(stepStart, beatSpace, beatLengthSeconds);
+        const auto out = outputs.find("out");
+        const auto beatOut = outputs.find("beat");
+        const auto barOut = outputs.find("bar");
+        const auto accentOut = outputs.find("accent");
+        const auto stepRelative = std::max(0.0, (stepStart - blockStart) * unitSeconds);
+
+        if (beatOut != outputs.end() && isBeatBoundary(stepStart, beatSpace, beatLengthSeconds)) {
+            beatOut->second->push(Event::makeTrigger(stepRelative));
+        }
+        if (barOut != outputs.end() && isBarBoundary(stepStart, beatSpace, beatLengthSeconds)) {
+            barOut->second->push(Event::makeTrigger(stepRelative));
+        }
+
+        for (int index = 0; index < ratchetCount; ++index) {
+            if (!passesChance(pulseChance_)) {
+                continue;
+            }
             const auto absoluteTime = stepStart + (spacing * static_cast<double>(index));
             const auto relative = (absoluteTime - blockStart) * unitSeconds;
             if (relative >= -1.0e-9) {
-                out.push(Event::makeTrigger(std::max(0.0, relative)));
+                if (out != outputs.end()) {
+                    out->second->push(Event::makeTrigger(std::max(0.0, relative)));
+                }
+                if (accentOut != outputs.end()) {
+                    accentOut->second->push(Event::makeValue(accentValue, std::max(0.0, relative)));
+                }
             }
         }
+    }
+
+    [[nodiscard]] static double parseProbability(std::string token)
+    {
+        if (!token.empty() && token.back() == '%') {
+            token.pop_back();
+            return std::clamp(std::stod(token) / 100.0, 0.0, 1.0);
+        }
+        return std::clamp(std::stod(token), 0.0, 1.0);
+    }
+
+    [[nodiscard]] static std::vector<double> parseAccentPattern(const std::vector<std::string>& values)
+    {
+        std::vector<double> accents;
+        for (const auto& token : values) {
+            try {
+                accents.push_back(std::clamp(std::stod(token), 0.0, 2.0));
+            } catch (...) {
+            }
+        }
+        return accents;
+    }
+
+    [[nodiscard]] int currentRatchetCount() const
+    {
+        if (ratchetPattern_.empty()) {
+            return ratchet_;
+        }
+        return ratchetPattern_[stepIndex_ % ratchetPattern_.size()];
+    }
+
+    [[nodiscard]] double currentAccent(double stepStart, bool beatSpace, double beatLengthSeconds) const
+    {
+        if (accentPattern_.empty()) {
+            return 1.0;
+        }
+        const auto beats = beatSpace ? stepStart : (stepStart / std::max(beatLengthSeconds, 1.0e-6));
+        const auto beatIndex = static_cast<int>(std::floor(beats + 1.0e-6)) % beatsPerBar_;
+        return accentPattern_[static_cast<std::size_t>(beatIndex) % accentPattern_.size()];
+    }
+
+    [[nodiscard]] bool isBeatBoundary(double stepStart, bool beatSpace, double beatLengthSeconds) const
+    {
+        const auto beats = beatSpace ? stepStart : (stepStart / std::max(beatLengthSeconds, 1.0e-6));
+        const auto whole = std::round(beats);
+        return std::abs(beats - whole) < 1.0e-6;
+    }
+
+    [[nodiscard]] bool isBarBoundary(double stepStart, bool beatSpace, double beatLengthSeconds) const
+    {
+        const auto beats = beatSpace ? stepStart : (stepStart / std::max(beatLengthSeconds, 1.0e-6));
+        const auto whole = std::round(beats);
+        if (std::abs(beats - whole) >= 1.0e-6) {
+            return false;
+        }
+        const auto beat = static_cast<int>(whole);
+        return beat % beatsPerBar_ == 0;
+    }
+
+    [[nodiscard]] bool passesChance(double chance)
+    {
+        if (chance >= 1.0) return true;
+        if (chance <= 0.0) return false;
+        return nextUnit() <= chance;
+    }
+
+    [[nodiscard]] double nextUnit()
+    {
+        state_ = state_ * 1664525u + 1013904223u;
+        return static_cast<double>(state_ & 0x00ffffffu) / static_cast<double>(0x01000000u);
     }
 
     double sampleRate_ = 44100.0;
@@ -495,8 +1093,16 @@ private:
     std::size_t stepIndex_ = 0;
     bool syncArmed_ = false;
     int ratchet_ = 1;
+    std::vector<int> ratchetPattern_;
     std::optional<double> swing_;
     std::vector<double> groovePattern_;
+    std::vector<double> accentPattern_;
+    double tupletRatio_ = 1.0;
+    double stepChance_ = 1.0;
+    double pulseChance_ = 1.0;
+    int beatsPerBar_ = 4;
+    std::uint32_t seed_ = 97;
+    std::uint32_t state_ = 97;
 };
 
 class PatternNode final : public RuntimeNode {
@@ -1121,6 +1727,7 @@ class GrowthNode final : public RuntimeNode {
 public:
     explicit GrowthNode(const Module& module)
         : root_(parseNoteName(findPropertyValue(module, "root").value_or("C3")))
+        , distribution_(parseDistributionConfig(module))
     {
         addRatioFamily("default", parseRatioValues(findPropertyValues(module, "ratios")), 1.0);
 
@@ -1179,6 +1786,7 @@ public:
         structure_.clear();
         structure_.push_back(root_);
         step_ = 0;
+        distributionMemory_ = 0.5;
     }
 
     void process(const ProcessContext& context,
@@ -1300,7 +1908,7 @@ private:
             totalWeight += std::max(0.01, candidate.score);
         }
 
-        auto choice = randomUnit() * totalWeight;
+        auto choice = distributionPhase01(distribution_, distributionMemory_, [this]() { return randomUnit(); }) * totalWeight;
         for (const auto& candidate : candidates) {
             choice -= std::max(0.01, candidate.score);
             if (choice <= 0.0) {
@@ -1395,7 +2003,7 @@ private:
             total += effectiveFamilyWeight(static_cast<int>(index));
         }
 
-        auto choice = randomUnit() * total;
+        auto choice = distributionPhase01(distribution_, distributionMemory_, [this]() { return randomUnit(); }) * total;
         for (std::size_t index = 0; index < familyWeights_.size(); ++index) {
             choice -= effectiveFamilyWeight(static_cast<int>(index));
             if (choice <= 0.0) {
@@ -1667,6 +2275,8 @@ private:
     int familyCount_ = 0;
     int staticFunctionalTarget_ = 0;
     int activeFunctionalTarget_ = 0;
+    DistributionConfig distribution_;
+    double distributionMemory_ = 0.5;
     std::uint32_t state_ = 131;
     std::size_t step_ = 0;
 };
@@ -1675,9 +2285,14 @@ class SwarmNode final : public RuntimeNode {
 public:
     explicit SwarmNode(const Module& module)
         : center_(parseNoteName(findPropertyValue(module, "center").value_or("D3")))
+        , distribution_(parseDistributionConfig(module))
     {
         if (const auto agents = findPropertyValue(module, "agents")) {
             voiceCount_ = std::max(1, std::stoi(*agents));
+        }
+
+        if (const auto seed = findPropertyValue(module, "seed")) {
+            seed_ = static_cast<std::uint32_t>(std::stoul(*seed));
         }
 
         if (const auto cluster = findPropertyValue(module, "cluster")) {
@@ -1710,6 +2325,8 @@ public:
         }
 
         rotateIndex_ = 0;
+        state_ = seed_;
+        distributionMemory_ = 0.5;
     }
 
     void process(const ProcessContext&,
@@ -1724,12 +2341,12 @@ public:
 
         for (const auto& event : trigger->second->events()) {
             updateVoices();
+            rotateIndex_ = chooseVoiceIndex();
             const auto& voice = voices_[rotateIndex_ % voices_.size()];
             out->second->push(Event::makePitch(static_cast<double>(voice.note), event.time));
             if (const auto density = outputs.find("density"); density != outputs.end()) {
                 density->second->push(Event::makeValue(clusteredness(), event.time));
             }
-            rotateIndex_ = (rotateIndex_ + 1) % voices_.size();
         }
     }
 
@@ -1796,12 +2413,37 @@ private:
         return std::clamp(1.0 - (spread / 18.0), 0.0, 1.0);
     }
 
+    [[nodiscard]] std::size_t chooseVoiceIndex()
+    {
+        if (voices_.empty()) {
+            return 0;
+        }
+        const auto phase = distributionPhase01(distribution_, distributionMemory_, [this]() { return nextUnit(); });
+        const auto index = static_cast<std::size_t>(std::clamp<int>(static_cast<int>(std::floor(phase * static_cast<double>(voices_.size()))), 0, static_cast<int>(voices_.size() - 1)));
+        return index;
+    }
+
+    [[nodiscard]] std::uint32_t nextBits()
+    {
+        state_ = state_ * 1664525u + 1013904223u;
+        return state_;
+    }
+
+    [[nodiscard]] double nextUnit()
+    {
+        return static_cast<double>(nextBits() & 0x00ffffffu) / static_cast<double>(0x01000000u);
+    }
+
     int center_ = 50;
     int voiceCount_ = 4;
     double cluster_ = 0.7;
     std::vector<std::string> roles_;
     std::vector<Voice> voices_;
     std::size_t rotateIndex_ = 0;
+    DistributionConfig distribution_;
+    double distributionMemory_ = 0.5;
+    std::uint32_t seed_ = 0x19283746u;
+    std::uint32_t state_ = seed_;
 };
 
 class CollapseNode final : public RuntimeNode {
@@ -2474,6 +3116,7 @@ class RandomNode final : public RuntimeNode {
 public:
     explicit RandomNode(const Module& module)
         : notes_(parsePitchList(findPropertyValues(module, "notes")))
+        , distribution_(parseDistributionConfig(module))
     {
         if (const auto pass = findPropertyValue(module, "pass")) {
             passChance_ = std::clamp(parseProbability(*pass), 0.0, 1.0);
@@ -2525,6 +3168,7 @@ public:
         state_ = seed_;
         lastNote_ = notes_.front();
         heldNotes_.clear();
+        distributionMemory_ = 0.5;
     }
 
     void process(const ProcessContext&,
@@ -2652,22 +3296,20 @@ private:
             return lastNote_;
         }
 
-        if (biasCenter_ <= 0.0) {
-            const auto index = static_cast<std::size_t>(nextBits() % static_cast<std::uint32_t>(candidates.size()));
-            return candidates[index];
-        }
-
         std::vector<double> weights;
         weights.reserve(candidates.size());
         double total = 0.0;
         for (const auto note : candidates) {
             const auto distance = static_cast<double>(std::abs(note - centerReference));
-            const auto weight = 1.0 / (1.0 + (distance * biasCenter_));
+            auto weight = 1.0;
+            if (biasCenter_ > 0.0) {
+                weight = 1.0 / (1.0 + (distance * biasCenter_));
+            }
             weights.push_back(weight);
             total += weight;
         }
 
-        const auto target = nextUnit() * total;
+        const auto target = distributionPhase01(distribution_, distributionMemory_, [this]() { return nextUnit(); }) * total;
         double running = 0.0;
         for (std::size_t i = 0; i < candidates.size(); ++i) {
             running += weights[i];
@@ -2722,6 +3364,1142 @@ private:
     bool avoidRepeat_ = false;
     int maxStep_ = 7;
     double biasCenter_ = 0.0;
+    DistributionConfig distribution_;
+    double distributionMemory_ = 0.5;
+};
+
+class SieveNode final : public RuntimeNode {
+public:
+    explicit SieveNode(const Module& module)
+    {
+        if (const auto mode = findPropertyValue(module, "mode")) {
+            mode_ = *mode;
+        }
+
+        if (const auto base = findPropertyValue(module, "base")) {
+            if (!base->empty() && (std::isdigit(static_cast<unsigned char>(base->front())) != 0 || base->front() == '-' || base->front() == '+')) {
+                base_ = std::stoi(*base);
+            } else {
+                base_ = parseNoteName(*base);
+            }
+        }
+
+        for (const auto& property : module.properties) {
+            if (property.key != "mod" || property.values.size() < 3) {
+                continue;
+            }
+
+            Rule rule;
+            rule.modulus = std::max(1, std::stoi(property.values[0]));
+            std::size_t index = 1;
+            if (property.values[index] == "keep") {
+                ++index;
+            }
+            for (; index < property.values.size(); ++index) {
+                rule.keep.push_back(normalizedRemainder(std::stoi(property.values[index]), rule.modulus));
+            }
+            std::sort(rule.keep.begin(), rule.keep.end());
+            rule.keep.erase(std::unique(rule.keep.begin(), rule.keep.end()), rule.keep.end());
+            if (!rule.keep.empty()) {
+                rules_.push_back(std::move(rule));
+            }
+        }
+    }
+
+    void reset(double) override
+    {
+        stepIndex_ = 0;
+    }
+
+    void process(const ProcessContext&,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        if (const auto pitchIn = inputs.find("pitch"); pitchIn != inputs.end()) {
+            if (auto* out = findOutput(outputs, "out")) {
+                for (const auto& event : pitchIn->second->events()) {
+                    const auto raw = static_cast<int>(std::lround(event.valueOr(60.0)));
+                    if (mode_ == "pass") {
+                        if (passes(raw)) {
+                            out->push(Event::makePitch(static_cast<double>(raw), event.time));
+                        }
+                    } else {
+                        out->push(Event::makePitch(static_cast<double>(nearest(raw)), event.time));
+                    }
+                }
+            }
+        }
+
+        if (const auto triggerIn = inputs.find("trigger"); triggerIn != inputs.end()) {
+            if (auto* triggerOut = findOutput(outputs, "trigger")) {
+                for (const auto& event : triggerIn->second->events()) {
+                    const auto step = base_ + stepIndex_;
+                    if (passes(step)) {
+                        triggerOut->push(Event::makeTrigger(event.time));
+                    }
+                    ++stepIndex_;
+                }
+            }
+        }
+    }
+
+private:
+    struct Rule {
+        int modulus = 12;
+        std::vector<int> keep;
+    };
+
+    static EventBuffer* findOutput(std::unordered_map<std::string, EventBuffer*>& outputs, const std::string& name)
+    {
+        if (const auto found = outputs.find(name); found != outputs.end()) {
+            return found->second;
+        }
+        return nullptr;
+    }
+
+    static int normalizedRemainder(int value, int modulus)
+    {
+        return ((value % modulus) + modulus) % modulus;
+    }
+
+    [[nodiscard]] bool passes(int value) const
+    {
+        if (rules_.empty()) {
+            return true;
+        }
+
+        for (const auto& rule : rules_) {
+            const auto remainder = normalizedRemainder(value, rule.modulus);
+            if (std::find(rule.keep.begin(), rule.keep.end(), remainder) == rule.keep.end()) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] int nearest(int raw) const
+    {
+        if (passes(raw)) {
+            return clampMidiNote(raw);
+        }
+
+        for (int distance = 1; distance <= 64; ++distance) {
+            const auto above = raw + distance;
+            if (passes(above)) {
+                return clampMidiNote(above);
+            }
+
+            const auto below = raw - distance;
+            if (passes(below)) {
+                return clampMidiNote(below);
+            }
+        }
+
+        return clampMidiNote(raw);
+    }
+
+    std::vector<Rule> rules_;
+    std::string mode_ = "nearest";
+    int base_ = 0;
+    int stepIndex_ = 0;
+};
+
+class FieldNode final : public RuntimeNode {
+public:
+    explicit FieldNode(const Module& module)
+        : center_(parseNoteName(findPropertyValue(module, "center").value_or("D3")))
+        , distribution_(parseDistributionConfig(module))
+    {
+        if (const auto density = findPropertyValue(module, "density")) {
+            density_ = std::clamp(std::stod(*density), 0.0, 1.0);
+        }
+        if (const auto spread = findPropertyValue(module, "spread")) {
+            spread_ = std::max(1.0, std::stod(*spread));
+        }
+        if (const auto drift = findPropertyValue(module, "drift")) {
+            drift_ = std::max(0.0, std::stod(*drift));
+        }
+        if (const auto emit = findPropertyValue(module, "emit")) {
+            emitCount_ = std::max(1, std::stoi(*emit));
+        }
+        if (const auto reg = findPropertyValue(module, "register")) {
+            registerMode_ = *reg;
+        }
+        if (const auto seed = findPropertyValue(module, "seed")) {
+            seed_ = static_cast<std::uint32_t>(std::stoul(*seed));
+        }
+        if (const auto mode = findPropertyValue(module, "mode")) {
+            mode_ = *mode;
+        }
+    }
+
+    void reset(double) override
+    {
+        state_ = seed_;
+        currentCenter_ = static_cast<double>(center_);
+        distributionMemory_ = 0.0;
+    }
+
+    void process(const ProcessContext&,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto trigger = inputs.find("trigger");
+        const auto out = outputs.find("out");
+        if (trigger == inputs.end() || out == outputs.end()) {
+            return;
+        }
+
+        for (const auto& event : trigger->second->events()) {
+            advanceCenter();
+            const auto count = std::max(1, emitCount_);
+            for (int index = 0; index < count; ++index) {
+                const auto relative = count > 1 ? (0.8 * static_cast<double>(index) / static_cast<double>(count)) : 0.0;
+                const auto note = clampToRegister(static_cast<int>(std::lround(currentCenter_ + sampleOffset())));
+                out->second->push(Event::makePitch(static_cast<double>(note), std::min(0.99, event.time + relative * 0.01)));
+            }
+            if (const auto densityOut = outputs.find("density"); densityOut != outputs.end()) {
+                densityOut->second->push(Event::makeValue(density_, event.time));
+            }
+        }
+    }
+
+private:
+    [[nodiscard]] std::uint32_t nextBits()
+    {
+        state_ = state_ * 1664525u + 1013904223u;
+        return state_;
+    }
+
+    [[nodiscard]] double nextUnit()
+    {
+        return static_cast<double>(nextBits() & 0x00ffffffu) / static_cast<double>(0x01000000u);
+    }
+
+    void advanceCenter()
+    {
+        if (drift_ <= 0.0) {
+            return;
+        }
+        const auto delta = (nextUnit() * 2.0 - 1.0) * drift_;
+        currentCenter_ = std::clamp(currentCenter_ + delta, 0.0, 127.0);
+    }
+
+    [[nodiscard]] double sampleOffset()
+    {
+        auto spread = spread_;
+        if (mode_ == "cluster") {
+            spread *= density_ * 0.35;
+        }
+        return distributionOffset(distribution_, spread, distributionMemory_, [this]() { return nextUnit(); });
+    }
+
+    [[nodiscard]] int clampToRegister(int note) const
+    {
+        if (registerMode_ == "low") {
+            return std::clamp(note, 24, 60);
+        }
+        if (registerMode_ == "mid") {
+            return std::clamp(note, 48, 84);
+        }
+        if (registerMode_ == "high") {
+            return std::clamp(note, 72, 108);
+        }
+        if (registerMode_ == "wide") {
+            return std::clamp(note, 24, 108);
+        }
+        return clampMidiNote(note);
+    }
+
+    int center_ = 50;
+    double currentCenter_ = 50.0;
+    double density_ = 0.6;
+    double spread_ = 12.0;
+    double drift_ = 0.0;
+    std::string mode_ = "cloud";
+    std::string registerMode_ = "mid";
+    int emitCount_ = 1;
+    DistributionConfig distribution_;
+    double distributionMemory_ = 0.0;
+    std::uint32_t seed_ = 0x31415926u;
+    std::uint32_t state_ = seed_;
+};
+
+class FormulaNode final : public RuntimeNode {
+public:
+    explicit FormulaNode(const Module& module)
+        : notes_(parsePitchList(findPropertyValues(module, "notes")))
+    {
+        if (notes_.empty()) {
+            notes_ = { 60, 63, 67, 70 };
+        }
+        if (const auto pitchValues = findPropertyValues(module, "pitch"); !pitchValues.empty()) {
+            notes_ = parsePitchList(pitchValues);
+        }
+        transpositions_ = parseNumericValues(findPropertyValues(module, "transpose"));
+        lengths_ = parseLengths(findPropertyValues(module, "lengths"));
+        if (lengths_.empty()) {
+            lengths_.assign(notes_.size(), 1);
+        }
+        while (lengths_.size() < notes_.size()) {
+            lengths_.push_back(lengths_.back());
+        }
+        timeValues_ = parseTimes(findPropertyValues(module, "rhythm"));
+        if (timeValues_.empty()) {
+            timeValues_ = parseTimes(findPropertyValues(module, "time"));
+        }
+        if (timeValues_.empty()) {
+            timeValues_.assign(notes_.size(), 0.125);
+        }
+        while (timeValues_.size() < notes_.size()) {
+            timeValues_.push_back(timeValues_.back());
+        }
+
+        gateValues_ = parseGateValues(findPropertyValues(module, "gate"));
+        if (gateValues_.empty()) {
+            gateValues_.assign(notes_.size(), 0.6);
+        }
+        while (gateValues_.size() < notes_.size()) {
+            gateValues_.push_back(gateValues_.back());
+        }
+
+        if (const auto rotate = findPropertyValues(module, "rotate"); rotate.size() >= 2 && rotate[0] == "every") {
+            rotateEvery_ = std::max(1, std::stoi(rotate[1]));
+        }
+        if (const auto reverse = findPropertyValue(module, "reverse")) {
+            reverse_ = (*reverse == "on");
+        }
+    }
+
+    void reset(double) override
+    {
+        step_ = 0;
+        countWithinStep_ = 0;
+        rotationOffset_ = 0;
+    }
+
+    void process(const ProcessContext&,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto trigger = inputs.find("trigger");
+        const auto out = outputs.find("out");
+        if (trigger == inputs.end() || out == outputs.end()) {
+            return;
+        }
+
+        for (const auto& event : trigger->second->events()) {
+            out->second->push(Event::makePitch(static_cast<double>(currentNote()), event.time));
+            if (const auto gateOut = outputs.find("gate"); gateOut != outputs.end()) {
+                Event gateEvent;
+                gateEvent.type = SignalType::gate;
+                gateEvent.time = event.time;
+                gateEvent.floats.push_back(currentGate());
+                gateOut->second->push(std::move(gateEvent));
+            }
+            if (const auto timeOut = outputs.find("time"); timeOut != outputs.end()) {
+                timeOut->second->push(Event::makeValue(currentTime(), event.time));
+            }
+            if (const auto stepOut = outputs.find("step"); stepOut != outputs.end()) {
+                stepOut->second->push(Event::makeValue(static_cast<double>(step_), event.time));
+            }
+            advance();
+        }
+    }
+
+private:
+    static std::vector<int> parseLengths(const std::vector<std::string>& values)
+    {
+        std::vector<int> result;
+        for (const auto& value : values) {
+            result.push_back(std::max(1, std::stoi(value)));
+        }
+        return result;
+    }
+
+    static std::vector<int> parseNumericValues(const std::vector<std::string>& values)
+    {
+        std::vector<int> result;
+        for (const auto& value : values) {
+            result.push_back(std::stoi(value));
+        }
+        return result;
+    }
+
+    static std::vector<double> parseTimes(const std::vector<std::string>& values)
+    {
+        std::vector<double> result;
+        for (const auto& value : values) {
+            result.push_back(parseTimeToken(value, 120.0));
+        }
+        return result;
+    }
+
+    static std::vector<double> parseGateValues(const std::vector<std::string>& values)
+    {
+        std::vector<double> result;
+        for (auto value : values) {
+            if (!value.empty() && value.back() == '%') {
+                value.pop_back();
+                result.push_back(std::stod(value) / 100.0);
+            } else {
+                result.push_back(std::stod(value));
+            }
+        }
+        return result;
+    }
+
+    [[nodiscard]] std::size_t activeIndex() const
+    {
+        if (notes_.empty()) {
+            return 0;
+        }
+        auto index = (step_ + rotationOffset_) % notes_.size();
+        if (reverse_) {
+            index = (notes_.size() - 1 - index) % notes_.size();
+        }
+        return index;
+    }
+
+    [[nodiscard]] int currentNote() const
+    {
+        const auto index = activeIndex();
+        const auto base = notes_[index];
+        const auto transposition = transpositions_.empty() ? 0 : transpositions_[index % transpositions_.size()];
+        return clampMidiNote(base + transposition);
+    }
+
+    [[nodiscard]] double currentTime() const
+    {
+        const auto index = activeIndex();
+        return timeValues_[index % timeValues_.size()];
+    }
+
+    [[nodiscard]] double currentGate() const
+    {
+        const auto index = activeIndex();
+        return std::clamp(gateValues_[index % gateValues_.size()], 0.0, 1.0);
+    }
+
+    void advance()
+    {
+        ++countWithinStep_;
+        const auto index = activeIndex();
+        if (countWithinStep_ >= lengths_[index % lengths_.size()]) {
+            countWithinStep_ = 0;
+            step_ = (step_ + 1) % notes_.size();
+            if (rotateEvery_ > 0 && step_ != 0 && (step_ % static_cast<std::size_t>(rotateEvery_)) == 0) {
+                rotationOffset_ = (rotationOffset_ + 1) % notes_.size();
+            }
+        }
+    }
+
+    std::vector<int> notes_;
+    std::vector<int> transpositions_;
+    std::vector<int> lengths_;
+    std::vector<double> timeValues_;
+    std::vector<double> gateValues_;
+    std::size_t step_ = 0;
+    int countWithinStep_ = 0;
+    std::size_t rotationOffset_ = 0;
+    int rotateEvery_ = 0;
+    bool reverse_ = false;
+};
+
+class MomentNode final : public RuntimeNode {
+public:
+    explicit MomentNode(const Module& module)
+    {
+        for (const auto& property : module.properties) {
+            if (property.key != "moment" || property.values.size() < 3) {
+                continue;
+            }
+
+            Moment moment;
+            moment.name = property.values[0];
+            moment.length = std::max(1, std::stoi(property.values[1]));
+            for (std::size_t index = 2; index < property.values.size(); ++index) {
+                moment.notes.push_back(parseNoteName(property.values[index]));
+            }
+            if (!moment.notes.empty()) {
+                moments_.push_back(std::move(moment));
+            }
+        }
+
+        if (const auto start = findPropertyValue(module, "start")) {
+            startMoment_ = *start;
+        }
+
+        if (const auto jump = findPropertyValue(module, "jump")) {
+            jumpMode_ = *jump;
+        }
+
+        if (const auto transition = findPropertyValue(module, "transition")) {
+            transitionMode_ = *transition;
+        }
+
+        for (const auto& property : module.properties) {
+            if (property.key == "chance" && property.values.size() >= 4 && property.values[1] == "->") {
+                transitions_[property.values[0]].push_back(Transition {
+                    property.values[2],
+                    std::max(0.0, std::stod(property.values[3]))
+                });
+            }
+        }
+
+        if (moments_.empty()) {
+            moments_.push_back(Moment { "default", 4, { 60, 64, 67 } });
+        }
+    }
+
+    void reset(double) override
+    {
+        currentMoment_ = startingMomentIndex();
+        stepWithinMoment_ = 0;
+        noteIndex_ = 0;
+        transitionPulse_ = 0.0;
+    }
+
+    [[nodiscard]] std::optional<std::string> activeStateLabel() const override
+    {
+        if (moments_.empty()) {
+            return std::nullopt;
+        }
+        return moments_[currentMoment_ % moments_.size()].name;
+    }
+
+    void process(const ProcessContext&,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto trigger = inputs.find("trigger");
+        const auto out = outputs.find("out");
+        if (trigger == inputs.end() || out == outputs.end()) {
+            return;
+        }
+
+        for (const auto& event : trigger->second->events()) {
+            const auto& moment = moments_[currentMoment_ % moments_.size()];
+            const auto note = moment.notes[noteIndex_ % moment.notes.size()];
+            out->second->push(Event::makePitch(static_cast<double>(note), event.time));
+            if (const auto stateOut = outputs.find("state"); stateOut != outputs.end()) {
+                stateOut->second->push(Event::makeValue(static_cast<double>(currentMoment_) + transitionPulse_, event.time));
+            }
+            ++noteIndex_;
+            ++stepWithinMoment_;
+            if (stepWithinMoment_ >= moment.length) {
+                chooseNextMoment();
+            }
+            transitionPulse_ = std::max(0.0, transitionPulse_ - 0.25);
+        }
+    }
+
+private:
+    struct Moment {
+        std::string name;
+        int length = 4;
+        std::vector<int> notes;
+    };
+
+    struct Transition {
+        std::string to;
+        double weight = 1.0;
+    };
+
+    [[nodiscard]] std::size_t startingMomentIndex() const
+    {
+        for (std::size_t index = 0; index < moments_.size(); ++index) {
+            if (moments_[index].name == startMoment_) {
+                return index;
+            }
+        }
+        return 0;
+    }
+
+    void chooseNextMoment()
+    {
+        stepWithinMoment_ = 0;
+        if (transitionMode_ != "carry") {
+            noteIndex_ = 0;
+        }
+
+        if (jumpMode_ == "weighted") {
+            if (const auto next = weightedTransitionIndex(); next.has_value()) {
+                currentMoment_ = *next;
+                transitionPulse_ = 0.75;
+                return;
+            }
+        }
+
+        currentMoment_ = (currentMoment_ + 1) % moments_.size();
+        transitionPulse_ = 0.35;
+    }
+
+    [[nodiscard]] std::optional<std::size_t> weightedTransitionIndex()
+    {
+        const auto& current = moments_[currentMoment_ % moments_.size()];
+        const auto found = transitions_.find(current.name);
+        if (found == transitions_.end() || found->second.empty()) {
+            return std::nullopt;
+        }
+
+        double total = 0.0;
+        for (const auto& transition : found->second) {
+            total += std::max(0.01, transition.weight);
+        }
+
+        auto choice = randomUnit() * total;
+        for (const auto& transition : found->second) {
+            choice -= std::max(0.01, transition.weight);
+            if (choice <= 0.0) {
+                for (std::size_t index = 0; index < moments_.size(); ++index) {
+                    if (moments_[index].name == transition.to) {
+                        return index;
+                    }
+                }
+            }
+        }
+
+        return std::nullopt;
+    }
+
+    [[nodiscard]] double randomUnit()
+    {
+        state_ = state_ * 1664525u + 1013904223u;
+        return static_cast<double>(state_ & 0x00ffffffu) / static_cast<double>(0x01000000u);
+    }
+
+    std::vector<Moment> moments_;
+    std::unordered_map<std::string, std::vector<Transition>> transitions_;
+    std::string startMoment_;
+    std::string jumpMode_ = "cycle";
+    std::string transitionMode_ = "reset";
+    std::size_t currentMoment_ = 0;
+    int stepWithinMoment_ = 0;
+    int noteIndex_ = 0;
+    double transitionPulse_ = 0.0;
+    std::uint32_t state_ = 0x10293847u;
+};
+
+class ChanceNode final : public RuntimeNode {
+public:
+    explicit ChanceNode(const Module& module)
+    {
+        if (const auto seed = findPropertyValue(module, "seed")) {
+            seed_ = static_cast<std::uint32_t>(std::stoul(*seed));
+        }
+
+        if (const auto mode = findPropertyValue(module, "mode")) {
+            mode_ = *mode;
+        }
+
+        if (const auto choose = findPropertyValues(module, "choose"); !choose.empty()) {
+            choices_ = parseChoices(choose);
+        }
+
+        if (const auto coin = findPropertyValues(module, "coin"); !coin.empty()) {
+            mode_ = "coin";
+            choices_ = parseChoices(coin);
+        }
+
+        if (const auto dice = findPropertyValues(module, "dice"); !dice.empty()) {
+            mode_ = "dice";
+            choices_ = parseChoices(dice);
+        }
+
+        auto iChing = findPropertyValues(module, "i_ching");
+        if (iChing.empty()) {
+            iChing = findPropertyValues(module, "iching");
+        }
+        if (!iChing.empty()) {
+            mode_ = "i_ching";
+            choices_ = parseChoices(iChing);
+        }
+
+        if (const auto weights = findPropertyValues(module, "weights"); !weights.empty()) {
+            for (const auto& value : weights) {
+                weights_.push_back(std::max(0.01, std::stod(value)));
+            }
+        }
+
+        for (const auto& property : module.properties) {
+            if (property.key == "rule" && !property.values.empty()) {
+                const auto ruleValue = parseChoiceToken(property.values[0]);
+                auto weight = 1.0;
+                for (std::size_t index = 1; index + 1 < property.values.size(); ++index) {
+                    if (property.values[index] == "weight") {
+                        weight = std::max(0.01, std::stod(property.values[index + 1]));
+                        break;
+                    }
+                }
+                weightedRules_.push_back(Choice { ruleValue });
+                weightedRuleWeights_.push_back(weight);
+            }
+        }
+
+        if (choices_.empty()) {
+            if (mode_ == "coin") {
+                choices_ = { Choice { 0.0 }, Choice { 1.0 } };
+            } else if (mode_ == "dice") {
+                choices_ = { Choice { 1.0 }, Choice { 2.0 }, Choice { 3.0 }, Choice { 4.0 }, Choice { 5.0 }, Choice { 6.0 } };
+            } else {
+                for (int index = 0; index < 8; ++index) {
+                    choices_.push_back(Choice { 48.0 + static_cast<double>(index * 2) });
+                }
+            }
+        }
+    }
+
+    void reset(double) override
+    {
+        state_ = seed_;
+    }
+
+    void process(const ProcessContext&,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto triggerIn = inputs.find("trigger");
+        if (triggerIn == inputs.end()) return;
+
+        auto* out = findOutput(outputs, "out");
+        auto* pitch = findOutput(outputs, "pitch");
+        auto* triggerOut = findOutput(outputs, "trigger");
+        auto* indexOut = findOutput(outputs, "index");
+
+        for (const auto& event : triggerIn->second->events()) {
+            const auto selection = selectChoice();
+            if (!selection.has_value()) {
+                continue;
+            }
+
+            if (out != nullptr) {
+                out->push(Event::makeValue(selection->choice.value, event.time));
+            }
+            if (pitch != nullptr) {
+                pitch->push(Event::makePitch(selection->choice.value, event.time));
+            }
+            if (triggerOut != nullptr) {
+                triggerOut->push(Event::makeTrigger(event.time));
+            }
+            if (indexOut != nullptr) {
+                indexOut->push(Event::makeValue(selection->indexValue, event.time));
+            }
+        }
+    }
+
+private:
+    struct Choice {
+        double value = 0.0;
+    };
+
+    struct Selection {
+        Choice choice;
+        double indexValue = 0.0;
+    };
+
+    static std::vector<Choice> parseChoices(const std::vector<std::string>& tokens)
+    {
+        std::vector<Choice> result;
+        result.reserve(tokens.size());
+        for (const auto& token : tokens) {
+            result.push_back({ parseChoiceToken(token) });
+        }
+        return result;
+    }
+
+    static double parseChoiceToken(const std::string& token)
+    {
+        return parseChoiceScalar(token);
+    }
+
+    static EventBuffer* findOutput(std::unordered_map<std::string, EventBuffer*>& outputs, const std::string& name)
+    {
+        if (const auto found = outputs.find(name); found != outputs.end()) {
+            return found->second;
+        }
+        return nullptr;
+    }
+
+    [[nodiscard]] std::optional<Selection> selectChoice()
+    {
+        if (choices_.empty()) {
+            return std::nullopt;
+        }
+
+        if (!weightedRules_.empty()) {
+            const auto index = weightedIndex(weightedRuleWeights_, [this]() { return nextUnit(); });
+            return Selection { weightedRules_[index], static_cast<double>(index) };
+        }
+
+        if (!weights_.empty() && weights_.size() == choices_.size() && mode_ != "coin" && mode_ != "i_ching") {
+            const auto index = weightedIndex(weights_, [this]() { return nextUnit(); });
+            return Selection { choices_[index], static_cast<double>(index) };
+        }
+
+        if (mode_ == "coin") {
+            const auto heads = nextUnit() >= 0.5;
+            const auto index = heads ? 1U : 0U;
+            return Selection { choices_[index % choices_.size()], static_cast<double>(index) };
+        }
+
+        if (mode_ == "dice") {
+            const auto faceCount = std::max(2, static_cast<int>(choices_.size()));
+            const auto face = 1 + static_cast<int>(nextBits() % static_cast<std::uint32_t>(faceCount));
+            const auto index = static_cast<std::size_t>((face - 1) % static_cast<int>(choices_.size()));
+            return Selection { choices_[index], static_cast<double>(face) };
+        }
+
+        const auto hexagram = rollHexagram();
+        const auto index = static_cast<std::size_t>((hexagram - 1) % static_cast<int>(choices_.size()));
+        return Selection { choices_[index], static_cast<double>(hexagram) };
+    }
+
+    [[nodiscard]] int rollHexagram()
+    {
+        int bits = 0;
+        for (int line = 0; line < 6; ++line) {
+            int sum = 0;
+            for (int coin = 0; coin < 3; ++coin) {
+                sum += (nextUnit() < 0.5) ? 2 : 3;
+            }
+            const auto yang = (sum == 7 || sum == 9);
+            if (yang) {
+                bits |= (1 << line);
+            }
+        }
+        return bits + 1;
+    }
+
+    [[nodiscard]] std::uint32_t nextBits()
+    {
+        state_ = state_ * 1664525u + 1013904223u;
+        return state_;
+    }
+
+    [[nodiscard]] double nextUnit()
+    {
+        return static_cast<double>(nextBits() & 0x00ffffffu) / static_cast<double>(0x01000000u);
+    }
+
+    std::string mode_ = "coin";
+    std::vector<Choice> choices_;
+    std::vector<double> weights_;
+    std::vector<Choice> weightedRules_;
+    std::vector<double> weightedRuleWeights_;
+    std::uint32_t seed_ = 0x2468ace1u;
+    std::uint32_t state_ = seed_;
+};
+
+class TableNode final : public RuntimeNode {
+public:
+    explicit TableNode(const Module& module)
+    {
+        if (const auto seed = findPropertyValue(module, "seed")) {
+            seed_ = static_cast<std::uint32_t>(std::stoul(*seed));
+        }
+
+        for (const auto& property : module.properties) {
+            if (property.key != "rule" || property.values.empty()) {
+                continue;
+            }
+            rawChoices_.push_back(property.values[0]);
+            choices_.push_back(parseChoiceScalar(property.values[0]));
+            auto weight = 1.0;
+            for (std::size_t index = 1; index + 1 < property.values.size(); ++index) {
+                if (property.values[index] == "weight") {
+                    weight = std::max(0.01, std::stod(property.values[index + 1]));
+                    break;
+                }
+            }
+            weights_.push_back(weight);
+        }
+
+        if (choices_.empty()) {
+            rawChoices_ = { "C4", "E4", "G4" };
+            choices_ = { 60.0, 64.0, 67.0 };
+            weights_ = { 1.0, 1.0, 1.0 };
+        }
+    }
+
+    void reset(double) override
+    {
+        state_ = seed_;
+    }
+
+    void process(const ProcessContext&,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto trigger = inputs.find("trigger");
+        if (trigger == inputs.end()) {
+            return;
+        }
+        for (const auto& event : trigger->second->events()) {
+            const auto index = weightedIndex(weights_, [this]() { return nextUnit(); });
+            emit(outputs, rawChoices_[index], choices_[index], static_cast<double>(index), event.time);
+        }
+    }
+
+private:
+    void emit(std::unordered_map<std::string, EventBuffer*>& outputs, const std::string& raw, double value, double index, double time)
+    {
+        if (const auto out = outputs.find("out"); out != outputs.end()) {
+            out->second->push(Event::makeValue(value, time));
+        }
+        if (const auto pitch = outputs.find("pitch"); pitch != outputs.end()) {
+            pitch->second->push(Event::makePitch(value, time));
+        }
+        if (const auto timeOut = outputs.find("time"); timeOut != outputs.end()) {
+            timeOut->second->push(Event::makeValue(value, time));
+        }
+        if (const auto gate = outputs.find("gate"); gate != outputs.end()) {
+            gate->second->push(Event::makeValue(parseGateScalar(raw), time));
+        }
+        if (const auto trigger = outputs.find("trigger"); trigger != outputs.end()) {
+            trigger->second->push(Event::makeTrigger(time));
+        }
+        if (const auto indexOut = outputs.find("index"); indexOut != outputs.end()) {
+            indexOut->second->push(Event::makeValue(index, time));
+        }
+    }
+
+    [[nodiscard]] std::uint32_t nextBits()
+    {
+        state_ = state_ * 1664525u + 1013904223u;
+        return state_;
+    }
+
+    [[nodiscard]] double nextUnit()
+    {
+        return static_cast<double>(nextBits() & 0x00ffffffu) / static_cast<double>(0x01000000u);
+    }
+
+    std::vector<std::string> rawChoices_;
+    std::vector<double> choices_;
+    std::vector<double> weights_;
+    std::uint32_t seed_ = 0x55112233u;
+    std::uint32_t state_ = seed_;
+};
+
+class MarkovNode final : public RuntimeNode {
+public:
+    explicit MarkovNode(const Module& module)
+    {
+        if (const auto seed = findPropertyValue(module, "seed")) {
+            seed_ = static_cast<std::uint32_t>(std::stoul(*seed));
+        }
+        if (const auto start = findPropertyValue(module, "start")) {
+            startState_ = *start;
+        }
+
+        for (const auto& property : module.properties) {
+            if (property.key != "state" || property.values.size() < 4 || property.values[1] != "->") {
+                continue;
+            }
+
+            TransitionSet set;
+            set.from = property.values[0];
+            for (std::size_t index = 2; index + 1 < property.values.size(); index += 2) {
+                set.targets.push_back(property.values[index]);
+                set.weights.push_back(std::max(0.01, std::stod(property.values[index + 1])));
+            }
+            if (!set.targets.empty()) {
+                transitions_[set.from] = std::move(set);
+            }
+        }
+
+        if (startState_.empty() && !transitions_.empty()) {
+            startState_ = transitions_.begin()->first;
+        }
+    }
+
+    void reset(double) override
+    {
+        state_ = seed_;
+        currentState_ = startState_;
+    }
+
+    void process(const ProcessContext&,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto trigger = inputs.find("trigger");
+        if (trigger == inputs.end()) {
+            return;
+        }
+
+        for (const auto& event : trigger->second->events()) {
+            if (!currentState_.empty()) {
+                if (const auto valueOut = outputs.find("value"); valueOut != outputs.end()) {
+                    valueOut->second->push(Event::makeValue(parseChoiceScalar(currentState_), event.time));
+                }
+                if (const auto out = outputs.find("out"); out != outputs.end()) {
+                    out->second->push(Event::makePitch(parseChoiceScalar(currentState_), event.time));
+                }
+                if (const auto timeOut = outputs.find("time"); timeOut != outputs.end()) {
+                    timeOut->second->push(Event::makeValue(parseChoiceScalar(currentState_), event.time));
+                }
+                if (const auto gateOut = outputs.find("gate"); gateOut != outputs.end()) {
+                    gateOut->second->push(Event::makeValue(parseGateScalar(currentState_), event.time));
+                }
+                if (const auto stateOut = outputs.find("state"); stateOut != outputs.end()) {
+                    stateOut->second->push(Event::makeValue(static_cast<double>(stateIndex(currentState_)), event.time));
+                }
+            }
+            advance();
+        }
+    }
+
+private:
+    struct TransitionSet {
+        std::string from;
+        std::vector<std::string> targets;
+        std::vector<double> weights;
+    };
+
+    void advance()
+    {
+        const auto found = transitions_.find(currentState_);
+        if (found == transitions_.end() || found->second.targets.empty()) {
+            return;
+        }
+        const auto index = weightedIndex(found->second.weights, [this]() { return nextUnit(); });
+        currentState_ = found->second.targets[index];
+    }
+
+    [[nodiscard]] int stateIndex(const std::string& name) const
+    {
+        int index = 0;
+        for (const auto& [key, _] : transitions_) {
+            if (key == name) {
+                return index;
+            }
+            ++index;
+        }
+        return index;
+    }
+
+    [[nodiscard]] std::uint32_t nextBits()
+    {
+        state_ = state_ * 1664525u + 1013904223u;
+        return state_;
+    }
+
+    [[nodiscard]] double nextUnit()
+    {
+        return static_cast<double>(nextBits() & 0x00ffffffu) / static_cast<double>(0x01000000u);
+    }
+
+    std::unordered_map<std::string, TransitionSet> transitions_;
+    std::string startState_;
+    std::string currentState_;
+    std::uint32_t seed_ = 0x22446688u;
+    std::uint32_t state_ = seed_;
+};
+
+class TreeNode final : public RuntimeNode {
+public:
+    explicit TreeNode(const Module& module)
+    {
+        if (const auto seed = findPropertyValue(module, "seed")) {
+            seed_ = static_cast<std::uint32_t>(std::stoul(*seed));
+        }
+        if (const auto root = findPropertyValue(module, "root")) {
+            root_ = *root;
+        }
+
+        for (const auto& property : module.properties) {
+            if (property.key != "node" || property.values.size() < 4 || property.values[1] != "->") {
+                continue;
+            }
+            Node node;
+            node.name = property.values[0];
+            for (std::size_t index = 2; index + 1 < property.values.size(); index += 2) {
+                node.targets.push_back(property.values[index]);
+                node.weights.push_back(std::max(0.01, std::stod(property.values[index + 1])));
+            }
+            if (!node.targets.empty()) {
+                nodes_[node.name] = std::move(node);
+            }
+        }
+
+        if (root_.empty() && !nodes_.empty()) {
+            root_ = nodes_.begin()->first;
+        }
+    }
+
+    void reset(double) override
+    {
+        state_ = seed_;
+    }
+
+    void process(const ProcessContext&,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto trigger = inputs.find("trigger");
+        if (trigger == inputs.end()) {
+            return;
+        }
+
+        for (const auto& event : trigger->second->events()) {
+            auto nodeName = root_;
+            int depth = 0;
+            while (depth < 16) {
+                const auto found = nodes_.find(nodeName);
+                if (found == nodes_.end() || found->second.targets.empty()) {
+                    break;
+                }
+                const auto index = weightedIndex(found->second.weights, [this]() { return nextUnit(); });
+                nodeName = found->second.targets[index];
+                ++depth;
+            }
+
+            const auto value = parseChoiceScalar(nodeName);
+            if (const auto out = outputs.find("out"); out != outputs.end()) {
+                out->second->push(Event::makeValue(value, event.time));
+            }
+            if (const auto pitch = outputs.find("pitch"); pitch != outputs.end()) {
+                pitch->second->push(Event::makePitch(value, event.time));
+            }
+            if (const auto timeOut = outputs.find("time"); timeOut != outputs.end()) {
+                timeOut->second->push(Event::makeValue(value, event.time));
+            }
+            if (const auto gateOut = outputs.find("gate"); gateOut != outputs.end()) {
+                gateOut->second->push(Event::makeValue(parseGateScalar(nodeName), event.time));
+            }
+            if (const auto triggerOut = outputs.find("trigger"); triggerOut != outputs.end()) {
+                triggerOut->second->push(Event::makeTrigger(event.time));
+            }
+            if (const auto indexOut = outputs.find("index"); indexOut != outputs.end()) {
+                indexOut->second->push(Event::makeValue(static_cast<double>(depth), event.time));
+            }
+        }
+    }
+
+private:
+    struct Node {
+        std::string name;
+        std::vector<std::string> targets;
+        std::vector<double> weights;
+    };
+
+    [[nodiscard]] std::uint32_t nextBits()
+    {
+        state_ = state_ * 1664525u + 1013904223u;
+        return state_;
+    }
+
+    [[nodiscard]] double nextUnit()
+    {
+        return static_cast<double>(nextBits() & 0x00ffffffu) / static_cast<double>(0x01000000u);
+    }
+
+    std::unordered_map<std::string, Node> nodes_;
+    std::string root_;
+    std::uint32_t seed_ = 0x8899aabbu;
+    std::uint32_t state_ = seed_;
 };
 
 class StagesNode final : public RuntimeNode {
@@ -3834,6 +5612,245 @@ private:
     IntFilter velocityFilter_;
     IntFilter excludedVelocityFilter_;
     std::vector<Operation> operations_;
+};
+
+class EquationNode final : public RuntimeNode {
+public:
+    explicit EquationNode(const Module& module)
+    {
+        for (const auto& property : module.properties) {
+            if (property.key == "value") {
+                valueExpr_ = parseEquationExpression(property.values);
+            } else if (property.key == "pitch") {
+                pitchExpr_ = parseEquationExpression(property.values);
+            } else if (property.key == "note") {
+                noteExpr_ = parseEquationExpression(property.values);
+            } else if (property.key == "velocity") {
+                velocityExpr_ = parseEquationExpression(property.values);
+            } else if (property.key == "channel") {
+                channelExpr_ = parseEquationExpression(property.values);
+            }
+        }
+    }
+
+    void reset(double sampleRate) override
+    {
+        sampleRate_ = sampleRate;
+        runningTimeSeconds_ = 0.0;
+        lastValueInput_ = 0.0;
+        lastPitchInput_ = 60.0;
+        activeNoteRemap_.clear();
+    }
+
+    void process(const ProcessContext& context,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto blockDuration = static_cast<double>(context.blockSize) / std::max(context.sampleRate, 1.0);
+        captureLatestScalarInputs(inputs);
+
+        const auto midiIn = findEvents(inputs, "in");
+        const auto triggerIn = findEvents(inputs, "trigger");
+        const auto valueIn = findEvents(inputs, "value");
+        const auto pitchIn = findEvents(inputs, "pitch");
+
+        if (midiIn != nullptr && !midiIn->empty()) {
+            processMidiStream(context, *midiIn, inputs, outputs);
+        } else {
+            std::vector<double> evaluationTimes;
+            if (triggerIn != nullptr && !triggerIn->empty()) {
+                for (const auto& event : *triggerIn) {
+                    evaluationTimes.push_back(event.time);
+                }
+            } else if (valueIn != nullptr && !valueIn->empty()) {
+                for (const auto& event : *valueIn) {
+                    evaluationTimes.push_back(event.time);
+                }
+            } else if (pitchIn != nullptr && !pitchIn->empty()) {
+                for (const auto& event : *pitchIn) {
+                    evaluationTimes.push_back(event.time);
+                }
+            } else {
+                evaluationTimes.push_back(0.0);
+            }
+
+            for (const auto eventTime : evaluationTimes) {
+                emitDerivedSignals(context, outputs, buildVariables(context, nullptr, eventTime, inputs), eventTime);
+            }
+        }
+
+        runningTimeSeconds_ += blockDuration;
+    }
+
+private:
+    using Vars = std::unordered_map<std::string, double>;
+
+    [[nodiscard]] static const std::vector<Event>* findEvents(const std::unordered_map<std::string, const EventBuffer*>& inputs, const std::string& port)
+    {
+        const auto it = inputs.find(port);
+        if (it == inputs.end() || it->second == nullptr) {
+            return nullptr;
+        }
+        return &it->second->events();
+    }
+
+    void captureLatestScalarInputs(const std::unordered_map<std::string, const EventBuffer*>& inputs)
+    {
+        if (const auto valueEvents = findEvents(inputs, "value"); valueEvents != nullptr && !valueEvents->empty()) {
+            lastValueInput_ = valueEvents->back().valueOr(lastValueInput_);
+        }
+        if (const auto pitchEvents = findEvents(inputs, "pitch"); pitchEvents != nullptr && !pitchEvents->empty()) {
+            lastPitchInput_ = pitchEvents->back().valueOr(lastPitchInput_);
+        }
+    }
+
+    void processMidiStream(const ProcessContext& context,
+        const std::vector<Event>& midiEvents,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs)
+    {
+        const auto out = outputs.find("out");
+        for (const auto& event : midiEvents) {
+            auto vars = buildVariables(context, &event, event.time, inputs);
+            emitDerivedSignals(context, outputs, vars, event.time);
+
+            if (out == outputs.end() || event.type != SignalType::midi) {
+                continue;
+            }
+
+            auto transformed = event;
+            if (transformed.ints.size() >= 4) {
+                if (noteExpr_ && (transformed.isNoteOn() || transformed.isNoteOff())) {
+                    transformed.ints[1] = remapNote(transformed, vars);
+                }
+                if (velocityExpr_ && (transformed.isNoteOn() || transformed.isNoteOff())) {
+                    transformed.ints[2] = clampMidiData(static_cast<int>(std::lround(evaluateExpression(velocityExpr_.get(), vars))));
+                }
+                if (channelExpr_) {
+                    transformed.ints[3] = clampMidiChannel(static_cast<int>(std::lround(evaluateExpression(channelExpr_.get(), vars))));
+                }
+            }
+            out->second->push(transformed);
+        }
+    }
+
+    void emitDerivedSignals(const ProcessContext&,
+        std::unordered_map<std::string, EventBuffer*>& outputs,
+        const Vars& vars,
+        double eventTime)
+    {
+        if (valueExpr_) {
+            if (const auto out = outputs.find("value"); out != outputs.end()) {
+                out->second->push(Event::makeValue(evaluateExpression(valueExpr_.get(), vars), eventTime));
+            }
+        }
+
+        if (pitchExpr_) {
+            if (const auto out = outputs.find("pitch"); out != outputs.end()) {
+                out->second->push(Event::makePitch(evaluateExpression(pitchExpr_.get(), vars), eventTime));
+            }
+        }
+    }
+
+    [[nodiscard]] Vars buildVariables(const ProcessContext& context,
+        const Event* event,
+        double eventTime,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs) const
+    {
+        Vars vars;
+        const auto absoluteTime = runningTimeSeconds_ + eventTime;
+        vars["t"] = absoluteTime;
+        vars["time"] = absoluteTime;
+        vars["beat"] = context.transportPpq + (absoluteTime * context.bpm / 60.0);
+        vars["bpm"] = context.bpm;
+        vars["value"] = currentScalarAtTime(inputs, "value", eventTime, lastValueInput_);
+        vars["pitch"] = currentScalarAtTime(inputs, "pitch", eventTime, lastPitchInput_);
+        vars["x"] = vars["value"];
+        vars["note"] = vars["pitch"];
+        vars["velocity"] = 100.0;
+        vars["channel"] = 1.0;
+        vars["status"] = 0.0;
+
+        if (event != nullptr) {
+            if (event->type == SignalType::midi) {
+                vars["note"] = static_cast<double>(event->noteNumber());
+                vars["pitch"] = static_cast<double>(event->noteNumber());
+                vars["velocity"] = static_cast<double>(event->velocityValue());
+                vars["channel"] = static_cast<double>(event->channel());
+                vars["status"] = !event->ints.empty() ? static_cast<double>(event->ints[0]) : 0.0;
+                vars["x"] = vars["note"];
+            } else {
+                vars["x"] = event->valueOr(vars["value"]);
+                if (event->type == SignalType::pitch) {
+                    vars["pitch"] = event->valueOr(vars["pitch"]);
+                    vars["note"] = vars["pitch"];
+                    vars["x"] = vars["pitch"];
+                }
+                if (event->type == SignalType::value) {
+                    vars["value"] = event->valueOr(vars["value"]);
+                    vars["x"] = vars["value"];
+                }
+            }
+        }
+
+        return vars;
+    }
+
+    [[nodiscard]] static double currentScalarAtTime(const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        const std::string& port,
+        double eventTime,
+        double fallback)
+    {
+        const auto it = inputs.find(port);
+        if (it == inputs.end() || it->second == nullptr) {
+            return fallback;
+        }
+
+        double current = fallback;
+        for (const auto& event : it->second->events()) {
+            if (event.time > eventTime + 1.0e-9) {
+                break;
+            }
+            current = event.valueOr(current);
+        }
+        return current;
+    }
+
+    double sampleRate_ = 44100.0;
+    double runningTimeSeconds_ = 0.0;
+    double lastValueInput_ = 0.0;
+    double lastPitchInput_ = 60.0;
+    std::unordered_map<int, std::vector<int>> activeNoteRemap_;
+    std::unique_ptr<ExprNode> valueExpr_;
+    std::unique_ptr<ExprNode> pitchExpr_;
+    std::unique_ptr<ExprNode> noteExpr_;
+    std::unique_ptr<ExprNode> velocityExpr_;
+    std::unique_ptr<ExprNode> channelExpr_;
+
+    int remapNote(const Event& event, const Vars& vars)
+    {
+        const auto originalNote = event.noteNumber();
+        const auto key = event.channel() * 128 + originalNote;
+        if (event.isNoteOn()) {
+            const auto mapped = clampMidiNote(static_cast<int>(std::lround(evaluateExpression(noteExpr_.get(), vars))));
+            activeNoteRemap_[key].push_back(mapped);
+            return mapped;
+        }
+
+        if (event.isNoteOff()) {
+            const auto it = activeNoteRemap_.find(key);
+            if (it != activeNoteRemap_.end() && !it->second.empty()) {
+                const auto mapped = it->second.back();
+                it->second.pop_back();
+                if (it->second.empty()) {
+                    activeNoteRemap_.erase(it);
+                }
+                return mapped;
+            }
+        }
+
+        return clampMidiNote(static_cast<int>(std::lround(evaluateExpression(noteExpr_.get(), vars))));
+    }
 };
 
 class ListsNode final : public RuntimeNode {
@@ -5144,6 +7161,785 @@ private:
     std::optional<std::size_t> lastFragmentIndex_;
 };
 
+class SlicerNode final : public RuntimeNode {
+public:
+    explicit SlicerNode(const Module& module)
+    {
+        if (const auto capture = findPropertyValues(module, "capture"); !capture.empty()) {
+            captureSeconds_ = parseCaptureTime(capture);
+        }
+        if (const auto slices = findPropertyValue(module, "slices")) {
+            sliceCount_ = std::max(1, std::stoi(*slices));
+        }
+        if (const auto order = findPropertyValue(module, "order")) {
+            randomOrder_ = (*order == "random");
+        }
+        for (const auto& property : module.properties) {
+            if (property.key == "drift" && property.values.size() >= 2) {
+                if (property.values[0] == "start") {
+                    startDriftSeconds_ = std::max(0.0, parseTimeToken(property.values[1], 120.0));
+                } else if (property.values[0] == "size") {
+                    sizeDriftSeconds_ = std::max(0.0, parseTimeToken(property.values[1], 120.0));
+                }
+            }
+        }
+        if (const auto reverse = findPropertyValue(module, "reverse")) {
+            reverseChance_ = parseChance(*reverse);
+        }
+        if (const auto seed = findPropertyValue(module, "seed")) {
+            seed_ = static_cast<std::uint32_t>(std::stoul(*seed));
+        }
+    }
+
+    void reset(double) override
+    {
+        absoluteTime_ = 0.0;
+        captureStart_.reset();
+        activeNotes_.clear();
+        spans_.clear();
+        queued_.clear();
+        state_ = seed_;
+        nextSliceIndex_ = 0;
+    }
+
+    void process(const ProcessContext& context,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto blockDuration = static_cast<double>(context.blockSize) / context.sampleRate;
+        const auto blockStart = absoluteTime_;
+        const auto blockEnd = blockStart + blockDuration;
+
+        captureInput(inputs, blockStart);
+        finalizeOpenSpans(blockEnd);
+
+        if (const auto trigger = inputs.find("trigger"); trigger != inputs.end() && !spans_.empty()) {
+            for (const auto& event : trigger->second->events()) {
+                const auto sliceIndex = chooseSliceIndex();
+                scheduleSlice(sliceIndex, event.time, outputs);
+            }
+        }
+
+        emitQueued(blockDuration, outputs);
+        absoluteTime_ = blockEnd;
+    }
+
+private:
+    struct NoteSpan {
+        int note = 60;
+        int velocity = 100;
+        int channel = 1;
+        double start = 0.0;
+        double duration = 0.1;
+    };
+
+    struct ActiveNote {
+        int velocity = 100;
+        int channel = 1;
+        double start = 0.0;
+    };
+
+    struct ScheduledEvent {
+        double timeUntilEmit = 0.0;
+        Event event;
+    };
+
+    static double parseCaptureTime(const std::vector<std::string>& values)
+    {
+        if (values.empty()) return parseTimeToken("1/8", 120.0);
+        return parseTimeToken(values.front(), 120.0);
+    }
+
+    static double parseChance(const std::string& text)
+    {
+        auto value = text;
+        if (!value.empty() && value.back() == '%') {
+            value.pop_back();
+            return std::clamp(std::stod(value) / 100.0, 0.0, 1.0);
+        }
+        if (value == "on") return 1.0;
+        if (value == "off") return 0.0;
+        return std::clamp(std::stod(value), 0.0, 1.0);
+    }
+
+    void captureInput(const std::unordered_map<std::string, const EventBuffer*>& inputs, double blockStart)
+    {
+        const auto input = inputs.find("in");
+        if (input == inputs.end()) return;
+
+        if (!captureStart_.has_value() && !input->second->events().empty()) {
+            captureStart_ = blockStart;
+        }
+
+        for (const auto& event : input->second->events()) {
+            if (!captureStart_.has_value()) break;
+            const auto absoluteEventTime = blockStart + event.time;
+            if ((absoluteEventTime - *captureStart_) > captureSeconds_) {
+                continue;
+            }
+
+            if (event.isNoteOn()) {
+                activeNotes_[event.noteNumber()] = ActiveNote { event.velocityValue(), event.channel(), absoluteEventTime - *captureStart_ };
+            } else if (event.isNoteOff()) {
+                const auto it = activeNotes_.find(event.noteNumber());
+                if (it == activeNotes_.end()) continue;
+                spans_.push_back({
+                    event.noteNumber(),
+                    it->second.velocity,
+                    it->second.channel,
+                    it->second.start,
+                    std::max(0.01, absoluteEventTime - *captureStart_ - it->second.start)
+                });
+                activeNotes_.erase(it);
+            }
+        }
+    }
+
+    void finalizeOpenSpans(double blockEnd)
+    {
+        if (!captureStart_.has_value()) return;
+        if ((blockEnd - *captureStart_) < captureSeconds_) return;
+        for (const auto& [note, active] : activeNotes_) {
+            spans_.push_back({
+                note,
+                active.velocity,
+                active.channel,
+                active.start,
+                std::max(0.05, captureSeconds_ - active.start)
+            });
+        }
+        activeNotes_.clear();
+    }
+
+    [[nodiscard]] std::size_t chooseSliceIndex()
+    {
+        if (sliceCount_ <= 1) return 0;
+        if (randomOrder_) {
+            return static_cast<std::size_t>(nextBits() % static_cast<std::uint32_t>(sliceCount_));
+        }
+        const auto value = nextSliceIndex_;
+        nextSliceIndex_ = (nextSliceIndex_ + 1) % static_cast<std::size_t>(sliceCount_);
+        return value;
+    }
+
+    void scheduleSlice(std::size_t sliceIndex, double triggerTime, std::unordered_map<std::string, EventBuffer*>& outputs)
+    {
+        const auto baseSize = captureSeconds_ / static_cast<double>(std::max(1, sliceCount_));
+        const auto startJitter = ((nextUnit() * 2.0) - 1.0) * startDriftSeconds_;
+        const auto sizeJitter = ((nextUnit() * 2.0) - 1.0) * sizeDriftSeconds_;
+        const auto sliceStart = std::clamp((static_cast<double>(sliceIndex) * baseSize) + startJitter, 0.0, std::max(0.0, captureSeconds_ - 0.01));
+        const auto sliceSize = std::max(0.01, std::min(captureSeconds_ - sliceStart, baseSize + sizeJitter));
+        const auto reversed = nextUnit() < reverseChance_;
+
+        if (const auto index = outputs.find("index"); index != outputs.end()) {
+            index->second->push(Event::makeValue(static_cast<double>(sliceIndex), triggerTime));
+        }
+
+        for (const auto& span : spans_) {
+            const auto spanStart = span.start;
+            const auto spanEnd = span.start + span.duration;
+            const auto overlapStart = std::max(spanStart, sliceStart);
+            const auto overlapEnd = std::min(spanEnd, sliceStart + sliceSize);
+            if (overlapEnd <= overlapStart) {
+                continue;
+            }
+
+            const auto localStart = overlapStart - sliceStart;
+            const auto localDuration = overlapEnd - overlapStart;
+            const auto emitStart = reversed ? std::max(0.0, sliceSize - (localStart + localDuration)) : localStart;
+
+            queued_.push_back({ triggerTime + emitStart, Event::makeNoteOn(span.note, span.velocity, span.channel, triggerTime + emitStart) });
+            queued_.push_back({ triggerTime + emitStart + localDuration, Event::makeNoteOff(span.note, 0, span.channel, triggerTime + emitStart + localDuration) });
+        }
+    }
+
+    void emitQueued(double blockDuration, std::unordered_map<std::string, EventBuffer*>& outputs)
+    {
+        const auto out = outputs.find("out");
+        if (out == outputs.end()) return;
+
+        std::vector<ScheduledEvent> remaining;
+        remaining.reserve(queued_.size());
+        for (auto& scheduled : queued_) {
+            scheduled.timeUntilEmit -= blockDuration;
+            if (scheduled.timeUntilEmit <= 0.0) {
+                scheduled.event.time = std::max(0.0, blockDuration + scheduled.timeUntilEmit);
+                out->second->push(scheduled.event);
+            } else {
+                remaining.push_back(scheduled);
+            }
+        }
+        queued_ = std::move(remaining);
+    }
+
+    [[nodiscard]] std::uint32_t nextBits()
+    {
+        state_ = state_ * 1664525u + 1013904223u;
+        return state_;
+    }
+
+    [[nodiscard]] double nextUnit()
+    {
+        return static_cast<double>(nextBits() & 0x00ffffffu) / static_cast<double>(0x01000000u);
+    }
+
+    double captureSeconds_ = 0.5;
+    int sliceCount_ = 8;
+    bool randomOrder_ = false;
+    double startDriftSeconds_ = 0.0;
+    double sizeDriftSeconds_ = 0.0;
+    double reverseChance_ = 0.0;
+    std::uint32_t seed_ = 0x9a17b1c3u;
+    std::uint32_t state_ = seed_;
+    double absoluteTime_ = 0.0;
+    std::optional<double> captureStart_;
+    std::unordered_map<int, ActiveNote> activeNotes_;
+    std::vector<NoteSpan> spans_;
+    std::vector<ScheduledEvent> queued_;
+    std::size_t nextSliceIndex_ = 0;
+};
+
+class PoolNode final : public RuntimeNode {
+public:
+    explicit PoolNode(const Module& module)
+    {
+        if (const auto capture = findPropertyValues(module, "capture"); !capture.empty()) {
+            captureSeconds_ = parseTimeToken(capture.front(), 120.0);
+        }
+        if (const auto slices = findPropertyValue(module, "slices")) {
+            sliceCount_ = std::max(1, std::stoi(*slices));
+        }
+        if (const auto steps = findPropertyValues(module, "steps"); !steps.empty()) {
+            for (const auto& value : steps) {
+                stepSequence_.push_back(std::max(0, std::stoi(value)));
+            }
+        }
+        for (const auto& property : module.properties) {
+            if (property.key == "drift" && property.values.size() >= 2) {
+                if (property.values[0] == "start") {
+                    startDriftSeconds_ = std::max(0.0, parseTimeToken(property.values[1], 120.0));
+                } else if (property.values[0] == "size") {
+                    sizeDriftSeconds_ = std::max(0.0, parseTimeToken(property.values[1], 120.0));
+                }
+            }
+        }
+        if (const auto reverse = findPropertyValue(module, "reverse")) {
+            reverse_ = (*reverse == "on");
+        }
+        if (const auto seed = findPropertyValue(module, "seed")) {
+            seed_ = static_cast<std::uint32_t>(std::stoul(*seed));
+        }
+    }
+
+    void reset(double) override
+    {
+        absoluteTime_ = 0.0;
+        captureStart_.reset();
+        activeNotes_.clear();
+        spans_.clear();
+        queued_.clear();
+        state_ = seed_;
+        stepIndex_ = 0;
+    }
+
+    void process(const ProcessContext& context,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto blockDuration = static_cast<double>(context.blockSize) / context.sampleRate;
+        const auto blockStart = absoluteTime_;
+        const auto blockEnd = blockStart + blockDuration;
+
+        captureInput(inputs, blockStart);
+        finalizeOpenSpans(blockEnd);
+
+        if (const auto trigger = inputs.find("trigger"); trigger != inputs.end() && !spans_.empty()) {
+            for (const auto& event : trigger->second->events()) {
+                const auto sliceIndex = chooseStepSlice();
+                scheduleSlice(sliceIndex, event.time, outputs);
+            }
+        }
+
+        emitQueued(blockDuration, outputs);
+        absoluteTime_ = blockEnd;
+    }
+
+private:
+    struct NoteSpan {
+        int note = 60;
+        int velocity = 100;
+        int channel = 1;
+        double start = 0.0;
+        double duration = 0.1;
+    };
+
+    struct ActiveNote {
+        int velocity = 100;
+        int channel = 1;
+        double start = 0.0;
+    };
+
+    struct ScheduledEvent {
+        double timeUntilEmit = 0.0;
+        Event event;
+    };
+
+    void captureInput(const std::unordered_map<std::string, const EventBuffer*>& inputs, double blockStart)
+    {
+        const auto input = inputs.find("in");
+        if (input == inputs.end()) return;
+
+        if (!captureStart_.has_value() && !input->second->events().empty()) {
+            captureStart_ = blockStart;
+        }
+
+        for (const auto& event : input->second->events()) {
+            if (!captureStart_.has_value()) break;
+            const auto absoluteEventTime = blockStart + event.time;
+            if ((absoluteEventTime - *captureStart_) > captureSeconds_) {
+                continue;
+            }
+
+            if (event.isNoteOn()) {
+                activeNotes_[event.noteNumber()] = ActiveNote { event.velocityValue(), event.channel(), absoluteEventTime - *captureStart_ };
+            } else if (event.isNoteOff()) {
+                const auto it = activeNotes_.find(event.noteNumber());
+                if (it == activeNotes_.end()) continue;
+                spans_.push_back({
+                    event.noteNumber(),
+                    it->second.velocity,
+                    it->second.channel,
+                    it->second.start,
+                    std::max(0.01, absoluteEventTime - *captureStart_ - it->second.start)
+                });
+                activeNotes_.erase(it);
+            }
+        }
+    }
+
+    void finalizeOpenSpans(double blockEnd)
+    {
+        if (!captureStart_.has_value()) return;
+        if ((blockEnd - *captureStart_) < captureSeconds_) return;
+        for (const auto& [note, active] : activeNotes_) {
+            spans_.push_back({
+                note,
+                active.velocity,
+                active.channel,
+                active.start,
+                std::max(0.05, captureSeconds_ - active.start)
+            });
+        }
+        activeNotes_.clear();
+    }
+
+    [[nodiscard]] std::size_t chooseStepSlice()
+    {
+        if (stepSequence_.empty()) {
+            return static_cast<std::size_t>(nextBits() % static_cast<std::uint32_t>(std::max(1, sliceCount_)));
+        }
+        const auto value = static_cast<std::size_t>(stepSequence_[stepIndex_ % stepSequence_.size()] % std::max(1, sliceCount_));
+        ++stepIndex_;
+        return value;
+    }
+
+    void scheduleSlice(std::size_t sliceIndex, double triggerTime, std::unordered_map<std::string, EventBuffer*>& outputs)
+    {
+        const auto baseSize = captureSeconds_ / static_cast<double>(std::max(1, sliceCount_));
+        const auto startJitter = ((nextUnit() * 2.0) - 1.0) * startDriftSeconds_;
+        const auto sizeJitter = ((nextUnit() * 2.0) - 1.0) * sizeDriftSeconds_;
+        const auto sliceStart = std::clamp((static_cast<double>(sliceIndex) * baseSize) + startJitter, 0.0, std::max(0.0, captureSeconds_ - 0.01));
+        const auto sliceSize = std::max(0.01, std::min(captureSeconds_ - sliceStart, baseSize + sizeJitter));
+
+        if (const auto index = outputs.find("index"); index != outputs.end()) {
+            index->second->push(Event::makeValue(static_cast<double>(sliceIndex), triggerTime));
+        }
+
+        for (const auto& span : spans_) {
+            const auto spanStart = span.start;
+            const auto spanEnd = span.start + span.duration;
+            const auto overlapStart = std::max(spanStart, sliceStart);
+            const auto overlapEnd = std::min(spanEnd, sliceStart + sliceSize);
+            if (overlapEnd <= overlapStart) {
+                continue;
+            }
+
+            const auto localStart = overlapStart - sliceStart;
+            const auto localDuration = overlapEnd - overlapStart;
+            const auto emitStart = reverse_ ? std::max(0.0, sliceSize - (localStart + localDuration)) : localStart;
+
+            queued_.push_back({ triggerTime + emitStart, Event::makeNoteOn(span.note, span.velocity, span.channel, triggerTime + emitStart) });
+            queued_.push_back({ triggerTime + emitStart + localDuration, Event::makeNoteOff(span.note, 0, span.channel, triggerTime + emitStart + localDuration) });
+        }
+    }
+
+    void emitQueued(double blockDuration, std::unordered_map<std::string, EventBuffer*>& outputs)
+    {
+        const auto out = outputs.find("out");
+        if (out == outputs.end()) return;
+
+        std::vector<ScheduledEvent> remaining;
+        remaining.reserve(queued_.size());
+        for (auto& scheduled : queued_) {
+            scheduled.timeUntilEmit -= blockDuration;
+            if (scheduled.timeUntilEmit <= 0.0) {
+                scheduled.event.time = std::max(0.0, blockDuration + scheduled.timeUntilEmit);
+                out->second->push(scheduled.event);
+            } else {
+                remaining.push_back(scheduled);
+            }
+        }
+        queued_ = std::move(remaining);
+    }
+
+    [[nodiscard]] std::uint32_t nextBits()
+    {
+        state_ = state_ * 1664525u + 1013904223u;
+        return state_;
+    }
+
+    [[nodiscard]] double nextUnit()
+    {
+        return static_cast<double>(nextBits() & 0x00ffffffu) / static_cast<double>(0x01000000u);
+    }
+
+    double captureSeconds_ = 0.5;
+    int sliceCount_ = 8;
+    std::vector<int> stepSequence_;
+    double startDriftSeconds_ = 0.0;
+    double sizeDriftSeconds_ = 0.0;
+    bool reverse_ = false;
+    std::uint32_t seed_ = 0x13f0c5ab;
+    std::uint32_t state_ = seed_;
+    double absoluteTime_ = 0.0;
+    std::optional<double> captureStart_;
+    std::unordered_map<int, ActiveNote> activeNotes_;
+    std::vector<NoteSpan> spans_;
+    std::vector<ScheduledEvent> queued_;
+    std::size_t stepIndex_ = 0;
+};
+
+class GrooveNode final : public RuntimeNode {
+public:
+    explicit GrooveNode(const Module& module)
+    {
+        offsetPattern_ = parseOffsets(findPropertyValues(module, "offsets"));
+        if (offsetPattern_.empty()) {
+            offsetPattern_ = { -0.004, 0.002, -0.001, 0.003 };
+        }
+        if (const auto chance = findPropertyValue(module, "chance")) {
+            chance_ = parseChance(*chance);
+        }
+        if (const auto seed = findPropertyValue(module, "seed")) {
+            seed_ = static_cast<std::uint32_t>(std::stoul(*seed));
+        }
+    }
+
+    void reset(double) override
+    {
+        queued_.clear();
+        stepIndex_ = 0;
+        state_ = seed_;
+    }
+
+    void process(const ProcessContext& context,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto input = inputs.find("in");
+        const auto out = outputs.find("out");
+        if (input == inputs.end() || out == outputs.end()) return;
+
+        const auto blockDuration = static_cast<double>(context.blockSize) / context.sampleRate;
+        for (const auto& event : input->second->events()) {
+            auto offset = offsetPattern_[stepIndex_ % offsetPattern_.size()];
+            if (nextUnit() > chance_) {
+                offset = 0.0;
+            }
+            ++stepIndex_;
+
+            auto shifted = event;
+            shifted.time = std::max(0.0, event.time + offset);
+            queued_.push_back({ shifted.time, shifted });
+        }
+
+        emitQueued(blockDuration, *out->second);
+    }
+
+private:
+    struct QueuedEvent {
+        double timeUntilEmit = 0.0;
+        Event event;
+    };
+
+    static std::vector<double> parseOffsets(const std::vector<std::string>& values)
+    {
+        std::vector<double> result;
+        result.reserve(values.size());
+        for (const auto& value : values) {
+            result.push_back(parseTimeToken(value, 120.0));
+        }
+        return result;
+    }
+
+    static double parseChance(std::string value)
+    {
+        if (!value.empty() && value.back() == '%') {
+            value.pop_back();
+            return std::clamp(std::stod(value) / 100.0, 0.0, 1.0);
+        }
+        return std::clamp(std::stod(value), 0.0, 1.0);
+    }
+
+    void emitQueued(double blockDuration, EventBuffer& output)
+    {
+        std::vector<QueuedEvent> remaining;
+        remaining.reserve(queued_.size());
+        for (auto& scheduled : queued_) {
+            scheduled.timeUntilEmit -= blockDuration;
+            if (scheduled.timeUntilEmit <= 0.0) {
+                scheduled.event.time = std::max(0.0, blockDuration + scheduled.timeUntilEmit);
+                output.push(scheduled.event);
+            } else {
+                remaining.push_back(scheduled);
+            }
+        }
+        queued_ = std::move(remaining);
+    }
+
+    [[nodiscard]] std::uint32_t nextBits()
+    {
+        state_ = state_ * 1664525u + 1013904223u;
+        return state_;
+    }
+
+    [[nodiscard]] double nextUnit()
+    {
+        return static_cast<double>(nextBits() & 0x00ffffffu) / static_cast<double>(0x01000000u);
+    }
+
+    std::vector<double> offsetPattern_;
+    double chance_ = 1.0;
+    std::vector<QueuedEvent> queued_;
+    std::size_t stepIndex_ = 0;
+    std::uint32_t seed_ = 0x4f1a2b3cu;
+    std::uint32_t state_ = seed_;
+};
+
+class RetrigNode final : public RuntimeNode {
+public:
+    explicit RetrigNode(const Module& module)
+    {
+        if (const auto count = findPropertyValue(module, "count")) {
+            count_ = std::max(1, std::stoi(*count));
+        }
+        if (const auto spacing = findPropertyValues(module, "spacing"); spacing.size() == 3 && spacing[1] == "->") {
+            startSpacingSeconds_ = parseTimeToken(spacing[0], 120.0);
+            endSpacingSeconds_ = parseTimeToken(spacing[2], 120.0);
+        } else if (spacing.size() == 1) {
+            startSpacingSeconds_ = endSpacingSeconds_ = parseTimeToken(spacing[0], 120.0);
+        }
+        if (const auto velocity = findPropertyValues(module, "velocity"); velocity.size() == 3 && velocity[1] == "->") {
+            startVelocity_ = std::clamp(std::stoi(velocity[0]), 1, 127);
+            endVelocity_ = std::clamp(std::stoi(velocity[2]), 1, 127);
+        }
+        if (const auto shape = findPropertyValue(module, "shape")) {
+            shape_ = *shape;
+        }
+    }
+
+    void reset(double) override
+    {
+        queued_.clear();
+    }
+
+    void process(const ProcessContext& context,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto input = inputs.find("in");
+        const auto out = outputs.find("out");
+        if (input == inputs.end() || out == outputs.end()) return;
+
+        const auto blockDuration = static_cast<double>(context.blockSize) / context.sampleRate;
+        for (const auto& event : input->second->events()) {
+            if (event.isNoteOn()) {
+                scheduleRetrig(event);
+            } else if (!event.isNoteOff()) {
+                queued_.push_back({ event.time, event });
+            }
+        }
+
+        emitQueued(blockDuration, *out->second);
+    }
+
+private:
+    struct ScheduledEvent {
+        double timeUntilEmit = 0.0;
+        Event event;
+    };
+
+    [[nodiscard]] double shapeMix(double t) const
+    {
+        t = clamp01(t);
+        if (shape_ == "accelerate") return t * t;
+        if (shape_ == "decelerate") return std::sqrt(t);
+        return t;
+    }
+
+    void scheduleRetrig(const Event& trigger)
+    {
+        double accumulated = trigger.time;
+        for (int i = 0; i < count_; ++i) {
+            const auto mix = shapeMix((count_ <= 1) ? 0.0 : static_cast<double>(i) / static_cast<double>(count_ - 1));
+            const auto spacing = startSpacingSeconds_ + ((endSpacingSeconds_ - startSpacingSeconds_) * mix);
+            const auto velocity = static_cast<int>(std::lround(startVelocity_ + ((endVelocity_ - startVelocity_) * mix)));
+            const auto noteLength = std::max(0.008, std::min(0.12, std::max(spacing * 0.7, 0.012)));
+
+            queued_.push_back({ accumulated, Event::makeNoteOn(trigger.noteNumber(), velocity, trigger.channel(), accumulated) });
+            queued_.push_back({ accumulated + noteLength, Event::makeNoteOff(trigger.noteNumber(), 0, trigger.channel(), accumulated + noteLength) });
+            accumulated += spacing;
+        }
+    }
+
+    void emitQueued(double blockDuration, EventBuffer& output)
+    {
+        std::vector<ScheduledEvent> remaining;
+        remaining.reserve(queued_.size());
+        for (auto& scheduled : queued_) {
+            scheduled.timeUntilEmit -= blockDuration;
+            if (scheduled.timeUntilEmit <= 0.0) {
+                scheduled.event.time = std::max(0.0, blockDuration + scheduled.timeUntilEmit);
+                output.push(scheduled.event);
+            } else {
+                remaining.push_back(scheduled);
+            }
+        }
+        queued_ = std::move(remaining);
+    }
+
+    int count_ = 3;
+    double startSpacingSeconds_ = 0.022;
+    double endSpacingSeconds_ = 0.008;
+    int startVelocity_ = 100;
+    int endVelocity_ = 48;
+    std::string shape_ = "accelerate";
+    std::vector<ScheduledEvent> queued_;
+};
+
+class LengthNode final : public RuntimeNode {
+public:
+    explicit LengthNode(const Module& module)
+    {
+        if (const auto multiply = findPropertyValue(module, "multiply")) {
+            multiply_ = std::clamp(std::stod(*multiply), 0.01, 8.0);
+        }
+        if (const auto quantize = findPropertyValue(module, "quantize")) {
+            quantizeSeconds_ = std::max(0.0, parseTimeToken(*quantize, 120.0));
+        }
+        if (const auto clamp = findPropertyValues(module, "clamp"); !clamp.empty()) {
+            if (clamp.size() == 1) {
+                if (const auto dots = clamp[0].find(".."); dots != std::string::npos) {
+                    minSeconds_ = std::max(0.001, parseTimeToken(clamp[0].substr(0, dots), 120.0));
+                    maxSeconds_ = std::max(minSeconds_, parseTimeToken(clamp[0].substr(dots + 2), 120.0));
+                }
+            } else if (clamp.size() >= 2) {
+                minSeconds_ = std::max(0.001, parseTimeToken(clamp[0], 120.0));
+                maxSeconds_ = std::max(minSeconds_, parseTimeToken(clamp[1], 120.0));
+            }
+        }
+    }
+
+    void reset(double) override
+    {
+        absoluteTime_ = 0.0;
+        active_.clear();
+        queued_.clear();
+    }
+
+    void process(const ProcessContext& context,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto input = inputs.find("in");
+        const auto out = outputs.find("out");
+        if (input == inputs.end() || out == outputs.end()) return;
+
+        const auto blockDuration = static_cast<double>(context.blockSize) / context.sampleRate;
+        const auto blockStart = absoluteTime_;
+
+        for (const auto& event : input->second->events()) {
+            const auto absoluteEventTime = blockStart + event.time;
+            if (event.isNoteOn()) {
+                active_[keyFor(event.noteNumber(), event.channel())] = { absoluteEventTime, event.channel() };
+                out->second->push(event);
+            } else if (event.isNoteOff()) {
+                const auto key = keyFor(event.noteNumber(), event.channel());
+                const auto found = active_.find(key);
+                if (found == active_.end()) {
+                    out->second->push(event);
+                    continue;
+                }
+
+                auto duration = std::max(0.005, absoluteEventTime - found->second.startTime);
+                duration *= multiply_;
+                if (quantizeSeconds_ > 0.0) {
+                    duration = std::max(quantizeSeconds_, std::round(duration / quantizeSeconds_) * quantizeSeconds_);
+                }
+                duration = std::clamp(duration, minSeconds_, maxSeconds_);
+                const auto targetTime = found->second.startTime + duration;
+                queued_.push_back({ std::max(0.0, targetTime - blockStart), Event::makeNoteOff(event.noteNumber(), 0, event.channel(), std::max(0.0, targetTime - blockStart)) });
+                active_.erase(found);
+            } else {
+                out->second->push(event);
+            }
+        }
+
+        emitQueued(blockDuration, *out->second);
+        absoluteTime_ = blockStart + blockDuration;
+    }
+
+private:
+    struct ActiveNote {
+        double startTime = 0.0;
+        int channel = 1;
+    };
+
+    struct ScheduledEvent {
+        double timeUntilEmit = 0.0;
+        Event event;
+    };
+
+    static int keyFor(int note, int channel)
+    {
+        return (channel * 256) + note;
+    }
+
+    void emitQueued(double blockDuration, EventBuffer& output)
+    {
+        std::vector<ScheduledEvent> remaining;
+        remaining.reserve(queued_.size());
+        for (auto& scheduled : queued_) {
+            scheduled.timeUntilEmit -= blockDuration;
+            if (scheduled.timeUntilEmit <= 0.0) {
+                scheduled.event.time = std::max(0.0, blockDuration + scheduled.timeUntilEmit);
+                output.push(scheduled.event);
+            } else {
+                remaining.push_back(scheduled);
+            }
+        }
+        queued_ = std::move(remaining);
+    }
+
+    double multiply_ = 0.5;
+    double quantizeSeconds_ = 0.0;
+    double minSeconds_ = 0.01;
+    double maxSeconds_ = 0.12;
+    double absoluteTime_ = 0.0;
+    std::unordered_map<int, ActiveNote> active_;
+    std::vector<ScheduledEvent> queued_;
+};
+
 class SplitNode final : public RuntimeNode {
 public:
     explicit SplitNode(const Module& module)
@@ -5639,6 +8435,23 @@ private:
     std::vector<Event> captured_;
 };
 
+class PassThroughNode final : public RuntimeNode {
+public:
+    void reset(double) override {}
+
+    void process(const ProcessContext&,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto in = inputs.find("in");
+        const auto out = outputs.find("out");
+        if (in == inputs.end() || out == outputs.end()) {
+            return;
+        }
+        out->second->append(*in->second);
+    }
+};
+
 std::unique_ptr<RuntimeNode> makeRuntimeNode(const NodeInfo& info, const Module& module)
 {
     if (info.family == ModuleFamily::input && info.kind == "midi") {
@@ -5689,6 +8502,34 @@ std::unique_ptr<RuntimeNode> makeRuntimeNode(const NodeInfo& info, const Module&
         return std::make_unique<RandomNode>(module);
     }
 
+    if (info.family == ModuleFamily::generate && info.kind == "chance") {
+        return std::make_unique<ChanceNode>(module);
+    }
+
+    if (info.family == ModuleFamily::generate && info.kind == "table") {
+        return std::make_unique<TableNode>(module);
+    }
+
+    if (info.family == ModuleFamily::generate && info.kind == "markov") {
+        return std::make_unique<MarkovNode>(module);
+    }
+
+    if (info.family == ModuleFamily::generate && info.kind == "tree") {
+        return std::make_unique<TreeNode>(module);
+    }
+
+    if (info.family == ModuleFamily::generate && info.kind == "field") {
+        return std::make_unique<FieldNode>(module);
+    }
+
+    if (info.family == ModuleFamily::generate && info.kind == "formula") {
+        return std::make_unique<FormulaNode>(module);
+    }
+
+    if (info.family == ModuleFamily::generate && info.kind == "moment") {
+        return std::make_unique<MomentNode>(module);
+    }
+
     if (info.family == ModuleFamily::shape && info.kind == "stages") {
         return std::make_unique<StagesNode>(module);
     }
@@ -5705,12 +8546,36 @@ std::unique_ptr<RuntimeNode> makeRuntimeNode(const NodeInfo& info, const Module&
         return std::make_unique<QuantizeNode>(module);
     }
 
+    if (info.family == ModuleFamily::transform && info.kind == "passthrough") {
+        return std::make_unique<PassThroughNode>();
+    }
+
+    if (info.family == ModuleFamily::transform && info.kind == "sieve") {
+        return std::make_unique<SieveNode>(module);
+    }
+
     if (info.family == ModuleFamily::transform && info.kind == "warp") {
         return std::make_unique<WarpNode>(module);
     }
 
+    if (info.family == ModuleFamily::transform && info.kind == "equation") {
+        return std::make_unique<EquationNode>(module);
+    }
+
     if (info.family == ModuleFamily::transform && info.kind == "bits") {
         return std::make_unique<BitsNode>(module);
+    }
+
+    if (info.family == ModuleFamily::transform && info.kind == "groove") {
+        return std::make_unique<GrooveNode>(module);
+    }
+
+    if (info.family == ModuleFamily::transform && info.kind == "retrig") {
+        return std::make_unique<RetrigNode>(module);
+    }
+
+    if (info.family == ModuleFamily::transform && info.kind == "length") {
+        return std::make_unique<LengthNode>(module);
     }
 
     if (info.family == ModuleFamily::project && info.kind == "to_notes") {
@@ -5747,6 +8612,14 @@ std::unique_ptr<RuntimeNode> makeRuntimeNode(const NodeInfo& info, const Module&
 
     if (info.family == ModuleFamily::memory && info.kind == "cutup") {
         return std::make_unique<CutupNode>(module);
+    }
+
+    if (info.family == ModuleFamily::memory && info.kind == "slicer") {
+        return std::make_unique<SlicerNode>(module);
+    }
+
+    if (info.family == ModuleFamily::memory && info.kind == "pool") {
+        return std::make_unique<PoolNode>(module);
     }
 
     return std::make_unique<StubRuntimeNode>(info, module);

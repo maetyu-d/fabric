@@ -5,6 +5,11 @@
 
 namespace {
 
+juce::String displayNameForNode(const juce::String& internalName)
+{
+    return internalName.replace("__", " / ");
+}
+
 pulse::NodeProcessingMode toPulseNodeMode(FabricAudioProcessor::NodeProcessingMode mode)
 {
     switch (mode) {
@@ -99,6 +104,7 @@ end
 random chance1
   notes D3 F3 A3 C4 E4
   mode walk
+  distribution gaussian
   pass 70%
   avoid repeat
   max step 5
@@ -144,6 +150,523 @@ seq1 -> notes1
 notes1 -> out
 end
 )pulse" },
+        { "Equation Melody",
+            R"pulse(patch equation_melody
+
+clock metro
+  every 1/16
+end
+
+equation curve1
+  pitch = 60 + sin(t * 2.4) * 7 + cos(t * 0.5) * 4
+end
+
+notes notes1
+  quantize D dorian
+  gate 58%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> curve1.trigger
+curve1.pitch -> notes1
+notes1 -> out
+end
+)pulse" },
+        { "Chance Oracle",
+            R"pulse(patch chance_oracle
+
+clock metro
+  every 1/8
+end
+
+chance oracle
+  coin C3 G3
+  seed 42
+end
+
+chance diviner
+  dice D3 F3 A3 C4 E4
+  seed 7
+end
+
+chance hex
+  i_ching C3 Eb3 G3 Bb3 D4 F4 A4
+  seed 64
+end
+
+notes notes1
+  quantize D dorian
+  gate 62%
+  velocity 98
+end
+
+midi out out
+end
+
+metro -> oracle.trigger
+metro -> diviner.trigger
+metro -> hex.trigger
+hex.pitch -> notes1
+notes1 -> out
+end
+)pulse" },
+        { "Choice Table",
+            R"pulse(patch choice_table
+
+clock metro
+  every 1/8
+end
+
+table choices
+  rule C3 weight 3.0
+  rule Eb3 weight 1.5
+  rule G3 weight 2.5
+  rule Bb3 weight 1.0
+  seed 24
+end
+
+notes notes1
+  quantize C minor
+  gate 62%
+  velocity 98
+end
+
+midi out out
+end
+
+metro -> choices.trigger
+choices.pitch -> notes1
+notes1 -> out
+end
+)pulse" },
+        { "Markov Chain",
+            R"pulse(patch markov_chain
+
+clock metro
+  every 1/8
+end
+
+markov chain1
+  start C3
+  state C3 -> Eb3 0.55 G3 0.45
+  state Eb3 -> G3 0.60 Bb3 0.40
+  state G3 -> C4 0.52 D4 0.48
+  state Bb3 -> G3 0.70 C4 0.30
+  state C4 -> G3 0.50 D4 0.50
+  state D4 -> C3 0.58 Eb3 0.42
+  seed 31
+end
+
+notes notes1
+  quantize C minor
+  gate 58%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> chain1.trigger
+chain1 -> notes1
+notes1 -> out
+end
+)pulse" },
+        { "Decision Tree",
+            R"pulse(patch decision_tree
+
+clock metro
+  every 1/8
+end
+
+tree oracle
+  root root
+  node root -> branch_low 0.45 branch_high 0.55
+  node branch_low -> C3 0.55 Eb3 0.45
+  node branch_high -> G3 0.50 Bb3 0.50
+  seed 19
+end
+
+notes notes1
+  quantize C minor
+  gate 64%
+  velocity 100
+end
+
+midi out out
+end
+
+metro -> oracle.trigger
+oracle.pitch -> notes1
+notes1 -> out
+end
+)pulse" },
+        { "Subpatch Arp",
+            R"pulse(patch subpatch_arp
+
+midi in keys
+  channel 1
+end
+
+subpatch phrase
+  in midi input
+  in trigger tick
+  out midi output
+
+  quantize q
+    scale D dorian
+  end
+
+  arp arp1
+    gate 68%
+  end
+
+  input -> q
+  q -> arp1
+  tick -> arp1.trigger
+  arp1 -> output
+end
+
+clock metro
+  every 1/16
+end
+
+midi out out
+end
+
+keys -> phrase.input
+metro -> phrase.tick
+phrase.output -> out
+end
+)pulse" },
+        { "Reusable Module",
+            R"pulse(patch reusable_module
+
+module phrase key_root key_mode gate_pct
+  in midi input
+  in trigger tick
+  out midi output
+
+  quantize q
+    scale $key_root $key_mode
+  end
+
+  arp arp1
+    gate $gate_pct
+  end
+
+  input -> q
+  q -> arp1
+  tick -> arp1.trigger
+  arp1 -> output
+end
+
+midi in keys
+  channel 1
+end
+
+clock metro
+  every 1/16
+end
+
+use phrase left key_root=D key_mode=dorian gate_pct=68%
+use phrase right key_root=C key_mode=minor gate_pct=54%
+
+midi out out
+end
+
+keys -> left.input
+keys -> right.input
+metro -> left.tick
+metro -> right.tick
+left.output -> out
+right.output -> out
+end
+)pulse" },
+        { "Shared Probability",
+            R"pulse(patch shared_probability
+
+probability drifting
+  distribution brownian
+  burst 0.72
+end
+
+clock metro
+  every 1/16
+end
+
+random line1
+  using drifting
+  notes D3 F3 A3 C4 E4
+  mode walk
+  pass 78%
+  avoid repeat
+  max step 5
+  bias center 0.75
+  seed 41
+end
+
+field cloud1
+  using drifting
+  center D3
+  spread 7
+  density 0.58
+  emit 2
+  register mid
+  seed 19
+end
+
+notes notes1
+  quantize D dorian
+  gate 58%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> line1.trigger
+metro -> cloud1.trigger
+line1 -> notes1
+cloud1 -> notes1
+notes1 -> out
+end
+)pulse" },
+        { "Micro House Tools",
+            R"pulse(patch micro_house_tools
+
+clock metro
+  every 1/16
+end
+
+pattern riff
+  notes D3 F3 A3 C4
+  order up_down
+end
+
+notes source
+  quantize D dorian
+  gate 78%
+  velocity 98
+end
+
+length tight
+  multiply 0.35
+  clamp 12ms..70ms
+end
+
+retrig hats
+  count 3
+  spacing 22ms -> 8ms
+  velocity 94 -> 44
+  shape accelerate
+end
+
+groove shuffle
+  offsets -5ms 2ms -1ms 4ms
+  chance 85%
+end
+
+midi out out
+end
+
+metro -> riff.trigger
+riff -> source
+source -> tight
+tight -> hats
+hats -> shuffle
+shuffle -> out
+end
+)pulse" },
+        { "Micro Slice Pool",
+            R"pulse(patch micro_slice_pool
+
+clock source_clock
+  every 1/16
+end
+
+clock play_clock
+  every 1/8
+end
+
+pattern riff
+  notes C3 D3 G3 Bb3
+  order up_down
+end
+
+notes source
+  quantize C minor
+  gate 62%
+  velocity 96
+end
+
+slicer cuts
+  capture 1/4
+  slices 8
+  drift start 4ms
+  drift size 3ms
+  reverse 25%
+  seed 12
+end
+
+pool seqcuts
+  capture 1/4
+  slices 8
+  steps 0 0 3 1 4 2 6 5
+  drift start 2ms
+  drift size 2ms
+  reverse on
+  seed 8
+end
+
+midi out out
+end
+
+source_clock -> riff.trigger
+riff -> source
+source -> cuts
+source -> seqcuts
+play_clock -> cuts.trigger
+play_clock -> seqcuts.trigger
+cuts -> out
+seqcuts -> out
+end
+)pulse" },
+        { "Xenakis Sieve",
+            R"pulse(patch xenakis_sieve
+
+clock metro
+  every 1/16
+end
+
+pattern seq1
+  notes C3 D3 Eb3 F3 F#3 G3 A3 Bb3
+  order up_down
+end
+
+sieve mask1
+  mod 12 keep 0 1 4 7
+end
+
+sieve rhythm1
+  mod 8 keep 0 3 5
+end
+
+notes notes1
+  quantize C major
+  gate 60%
+  velocity 100
+end
+
+midi out out
+end
+
+metro -> rhythm1.trigger
+seq1 -> mask1
+mask1 -> notes1
+rhythm1.trigger -> notes1.gate
+notes1 -> out
+end
+)pulse" },
+        { "Tenney Field",
+            R"pulse(patch tenney_field
+
+clock metro
+  every 1/16
+end
+
+field cloud1
+  center D3
+  spread 9
+  density 0.72
+  drift 0.6
+  distribution gaussian
+  emit 3
+  register mid
+  seed 33
+end
+
+notes notes1
+  quantize D dorian
+  gate 52%
+  velocity 92
+end
+
+midi out out
+end
+
+metro -> cloud1.trigger
+cloud1 -> notes1
+notes1 -> out
+end
+)pulse" },
+        { "Formula Line",
+            R"pulse(patch formula_line
+
+clock metro
+  every 1/16
+end
+
+formula line1
+  pitch C3 Eb3 G3 Bb3
+  rhythm 1/8 1/16 1/8 1/16
+  gate 72% 40% 78% 52%
+  transpose 0 12 0 -12
+  lengths 2 1 2 1
+  rotate every 4
+end
+
+notes notes1
+  quantize C minor
+  gate 58%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> line1.trigger
+line1 -> notes1
+line1.time -> notes1.time
+line1.gate -> notes1.gate
+notes1 -> out
+end
+)pulse" },
+        { "Moment Form",
+            R"pulse(patch moment_form
+
+clock metro
+  every 1/16
+end
+
+moment form1
+  start still
+  jump weighted
+  transition carry
+  moment still 4 C3 E3 G3
+  moment burst 2 D4 F4 A4 C5
+  moment echo 3 Bb2 D3 F3
+  chance still -> burst 0.7
+  chance burst -> echo 0.6
+  chance echo -> still 0.8
+end
+
+notes notes1
+  quantize C major
+  gate 60%
+  velocity 98
+end
+
+midi out out
+end
+
+metro -> form1.trigger
+form1 -> notes1
+notes1 -> out
+end
+)pulse" },
         { "Groove Ratchet Arp",
             R"pulse(patch groove_ratchet_arp
 
@@ -153,9 +676,13 @@ end
 
 clock metro
   every 1/16
-  swing 60%
-  ratchet 3
-  groove 100 92 108 96
+  groove shuffle
+  tuplet 3:2
+  ratchet 1 2 1 3
+  chance 88%
+  pulse chance 74%
+  bars 4
+  accents 1.0 0.72 0.88 0.72
 end
 
 quantize in_key
@@ -524,6 +1051,8 @@ end
 
 growth crystal
   root C3
+  distribution poisson
+  lambda 2.8
   ratios 3/2 5/4 7/4
   family perfect weight 1.4 ratios 3/2 4/3
   family color weight 0.9 ratios 5/4 7/4 9/8
@@ -567,6 +1096,8 @@ swarm flock
   agents 6
   center D3
   cluster 0.7
+  distribution brownian
+  seed 29
   agent 1 anchor
   agent 2 follower
   agent 3 follower
@@ -1550,6 +2081,7 @@ std::vector<FabricAudioProcessor::NodeIoSnapshot> FabricAudioProcessor::buildNod
 
         NodeIoSnapshot snapshot;
         snapshot.moduleName = node.name;
+        snapshot.displayName = displayNameForNode(node.name);
         snapshot.family = juce::String(pulse::toString(node.family));
         snapshot.kind = node.kind;
         snapshot.incomingCount = static_cast<int>(incomingEvents.size());
@@ -2444,6 +2976,397 @@ keys -> phrase1
 phrase1 -> burroughs.in
 metro -> burroughs.trigger
 burroughs -> out
+)pulse" },
+        { "24 Equation Basics", "Use simple equations to generate melodies or reshape incoming MIDI note and velocity.", R"pulse(patch equation_melody
+
+clock metro
+  every 1/16
+end
+
+equation curve1
+  pitch = 60 + sin(t * 2.4) * 7 + cos(t * 0.5) * 4
+end
+
+notes notes1
+  quantize D dorian
+  gate 58%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> curve1.trigger
+curve1.pitch -> notes1
+notes1 -> out
+)pulse" },
+        { "25 Chance Operations", "Use coin tosses, dice, and I Ching style choice engines to make indeterminate musical decisions.", R"pulse(patch chance_basics
+
+clock metro
+  every 1/8
+end
+
+chance coin_flip
+  coin C3 G3
+  seed 42
+end
+
+chance dice_throw
+  dice D3 F3 A3 C4 E4
+  seed 7
+end
+
+chance oracle
+  i_ching C3 Eb3 G3 Bb3 D4 F4 A4
+  seed 64
+end
+
+notes notes1
+  quantize D dorian
+  gate 60%
+  velocity 98
+end
+
+midi out out
+end
+
+metro -> oracle.trigger
+oracle.pitch -> notes1
+notes1 -> out
+)pulse" },
+        { "26 Sieve Basics", "Use modular arithmetic to filter pitches and pulses in a Xenakis-inspired way.", R"pulse(patch sieve_basics
+
+clock metro
+  every 1/16
+end
+
+pattern seq1
+  notes C3 D3 Eb3 F3 F#3 G3 A3 Bb3
+  order up_down
+end
+
+sieve mask1
+  mod 12 keep 0 1 4 7
+end
+
+sieve rhythm1
+  mod 8 keep 0 3 5
+end
+
+notes notes1
+  quantize C major
+  gate 60%
+  velocity 100
+end
+
+midi out out
+end
+
+metro -> rhythm1.trigger
+seq1 -> mask1
+mask1 -> notes1
+rhythm1.trigger -> notes1.gate
+notes1 -> out
+)pulse" },
+        { "27 Field Basics", "Use a drifting pitch cloud as a generator of note fields.", R"pulse(patch field_basics
+
+clock metro
+  every 1/16
+end
+
+field cloud1
+  center D3
+  spread 9
+  density 0.72
+  drift 0.6
+  distribution gaussian
+  emit 3
+  register mid
+  seed 33
+end
+
+notes notes1
+  quantize D dorian
+  gate 52%
+  velocity 92
+end
+
+midi out out
+end
+
+metro -> cloud1.trigger
+cloud1 -> notes1
+notes1 -> out
+)pulse" },
+        { "28 Formula Basics", "Use one repeating formula to control pitch over time.", R"pulse(patch formula_line
+
+clock metro
+  every 1/16
+end
+
+formula line1
+  pitch C3 Eb3 G3 Bb3
+  rhythm 1/8 1/16 1/8 1/16
+  gate 72% 40% 78% 52%
+  transpose 0 12 0 -12
+  lengths 2 1 2 1
+  rotate every 4
+end
+
+notes notes1
+  quantize C minor
+  gate 58%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> line1.trigger
+line1 -> notes1
+line1.time -> notes1.time
+line1.gate -> notes1.gate
+notes1 -> out
+)pulse" },
+        { "29 Moment Form", "Move through named self-contained moments instead of continuous linear development.", R"pulse(patch moment_form
+
+clock metro
+  every 1/16
+end
+
+moment form1
+  start still
+  jump weighted
+  transition carry
+  moment still 4 C3 E3 G3
+  moment burst 2 D4 F4 A4 C5
+  moment echo 3 Bb2 D3 F3
+  chance still -> burst 0.7
+  chance burst -> echo 0.6
+  chance echo -> still 0.8
+end
+
+notes notes1
+  quantize C major
+  gate 60%
+  velocity 98
+end
+
+midi out out
+end
+
+metro -> form1.trigger
+form1 -> notes1
+notes1 -> out
+)pulse" },
+        { "30 Choice Table", "Use weighted rule objects to choose among musical outcomes with explicit probabilities.", R"pulse(patch choice_table
+
+clock metro
+  every 1/8
+end
+
+table choices
+  rule C3 weight 3.0
+  rule Eb3 weight 1.5
+  rule G3 weight 2.5
+  rule Bb3 weight 1.0
+  seed 24
+end
+
+notes notes1
+  quantize C minor
+  gate 62%
+  velocity 98
+end
+
+midi out out
+end
+
+metro -> choices.trigger
+choices.pitch -> notes1
+notes1 -> out
+)pulse" },
+        { "31 Markov Chain", "Move through states where each note chooses the next one from weighted transitions.", R"pulse(patch markov_chain
+
+clock metro
+  every 1/8
+end
+
+markov chain1
+  start C3
+  state C3 -> Eb3 0.55 G3 0.45
+  state Eb3 -> G3 0.60 Bb3 0.40
+  state G3 -> C4 0.52 D4 0.48
+  state Bb3 -> G3 0.70 C4 0.30
+  state C4 -> G3 0.50 D4 0.50
+  state D4 -> C3 0.58 Eb3 0.42
+  seed 31
+end
+
+notes notes1
+  quantize C minor
+  gate 58%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> chain1.trigger
+chain1 -> notes1
+notes1 -> out
+)pulse" },
+        { "32 Decision Tree", "Walk a weighted branching tree and turn each leaf into a musical choice.", R"pulse(patch decision_tree
+
+clock metro
+  every 1/8
+end
+
+tree oracle
+  root root
+  node root -> branch_low 0.45 branch_high 0.55
+  node branch_low -> C3 0.55 Eb3 0.45
+  node branch_high -> G3 0.50 Bb3 0.50
+  seed 19
+end
+
+notes notes1
+  quantize C minor
+  gate 64%
+  velocity 100
+end
+
+midi out out
+end
+
+metro -> oracle.trigger
+oracle.pitch -> notes1
+notes1 -> out
+)pulse" },
+        { "33 Subpatch Basics", "Group a small local patch behind typed in and out ports.", R"pulse(patch subpatch_basics
+
+midi in keys
+  channel 1
+end
+
+subpatch phrase
+  in midi input
+  in trigger tick
+  out midi output
+
+  quantize q
+    scale D dorian
+  end
+
+  arp arp1
+    gate 68%
+  end
+
+  input -> q
+  q -> arp1
+  tick -> arp1.trigger
+  arp1 -> output
+end
+
+clock metro
+  every 1/16
+end
+
+midi out out
+end
+
+keys -> phrase.input
+metro -> phrase.tick
+phrase.output -> out
+)pulse" },
+        { "34 Reusable Modules", "Define a module once and instantiate it multiple times with `use`.", R"pulse(patch reusable_module
+
+module phrase key_root key_mode gate_pct
+  in midi input
+  in trigger tick
+  out midi output
+
+  quantize q
+    scale $key_root $key_mode
+  end
+
+  arp arp1
+    gate $gate_pct
+  end
+
+  input -> q
+  q -> arp1
+  tick -> arp1.trigger
+  arp1 -> output
+end
+
+midi in keys
+  channel 1
+end
+
+clock metro
+  every 1/16
+end
+
+use phrase left key_root=D key_mode=dorian gate_pct=68%
+use phrase right key_root=C key_mode=minor gate_pct=54%
+
+midi out out
+end
+
+keys -> left.input
+keys -> right.input
+metro -> left.tick
+metro -> right.tick
+left.output -> out
+right.output -> out
+)pulse" },
+        { "35 Shared Probability", "Define one stochastic profile and reuse it across several generators with `using`.", R"pulse(patch shared_probability
+
+probability drifting
+  distribution brownian
+  burst 0.72
+end
+
+clock metro
+  every 1/16
+end
+
+random line1
+  using drifting
+  notes D3 F3 A3 C4 E4
+  mode walk
+  pass 78%
+  avoid repeat
+  max step 5
+  bias center 0.75
+  seed 41
+end
+
+field cloud1
+  using drifting
+  center D3
+  spread 7
+  density 0.58
+  emit 2
+  register mid
+  seed 19
+end
+
+notes notes1
+  quantize D dorian
+  gate 58%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> line1.trigger
+metro -> cloud1.trigger
+line1 -> notes1
+cloud1 -> notes1
+notes1 -> out
 )pulse" }
     };
     return entries;
@@ -2599,6 +3522,7 @@ FabricAudioProcessor::GraphSnapshot FabricAudioProcessor::graphFromEngine(const 
         const auto& node = patch.nodes[index];
         snapshot.nodes.push_back({
             node.name,
+            displayNameForNode(node.name),
             juce::String(pulse::toString(node.family)),
             node.kind,
             {},

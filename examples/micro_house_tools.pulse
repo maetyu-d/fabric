@@ -1,0 +1,44 @@
+patch micro_house_tools
+
+clock metro
+  every 1/16
+end
+
+pattern riff
+  notes D3 F3 A3 C4
+  order up_down
+end
+
+notes source
+  quantize D dorian
+  gate 78%
+  velocity 98
+end
+
+length tight
+  multiply 0.35
+  clamp 12ms..70ms
+end
+
+retrig hats
+  count 3
+  spacing 22ms -> 8ms
+  velocity 94 -> 44
+  shape accelerate
+end
+
+groove shuffle
+  offsets -5ms 2ms -1ms 4ms
+  chance 85%
+end
+
+midi out out
+end
+
+metro -> riff.trigger
+riff -> source
+source -> tight
+tight -> hats
+hats -> shuffle
+shuffle -> out
+end

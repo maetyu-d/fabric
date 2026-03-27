@@ -1,0 +1,27 @@
+patch decision_tree
+
+clock metro
+  every 1/8
+end
+
+tree oracle
+  root root
+  node root -> branch_low 0.45 branch_high 0.55
+  node branch_low -> C3 0.55 Eb3 0.45
+  node branch_high -> G3 0.50 Bb3 0.50
+  seed 19
+end
+
+notes notes1
+  quantize C minor
+  gate 64%
+  velocity 100
+end
+
+midi out out
+end
+
+metro -> oracle.trigger
+oracle.pitch -> notes1
+notes1 -> out
+end

@@ -8,6 +8,7 @@ Concepts:
 
 - `generate swarm` creates multiple internal agents.
 - follower, rebel, and anchor roles pull the melody in different directions.
+- `distribution brownian` makes voice choice drift over time instead of jumping evenly.
 - the merged result can then be projected into playable MIDI.
 
 Key idea:

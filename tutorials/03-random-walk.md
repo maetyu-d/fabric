@@ -8,6 +8,7 @@ Concepts:
 
 - `random` can choose notes from a pool.
 - `mode walk` keeps the melody moving locally instead of jumping anywhere.
+- `distribution gaussian` makes the choices cluster more naturally.
 - `avoid repeat`, `max step`, and `bias center` shape the result.
 
 What to try:

@@ -1,0 +1,16 @@
+patch equation_midi
+
+midi in keys
+end
+
+equation bend1
+  note = note + sin(t * 3.0) * 5
+  velocity = clamp(velocity * 0.8 + 15, 1, 127)
+end
+
+midi out out
+end
+
+keys -> bend1
+bend1 -> out
+end

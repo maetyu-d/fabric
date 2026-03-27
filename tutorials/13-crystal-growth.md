@@ -7,6 +7,7 @@ Patch: [examples/crystal_growth.pulse](/Users/md/Downloads/plugin%20language/exa
 Concepts:
 
 - `growth` grows note material from a root and ratio families.
+- `distribution poisson` changes how likely different growth choices are.
 - weighted families let different harmonic colors compete.
 - density can drive note behavior over time.
 - core lines like `root C3`, `family perfect ...`, and `target tonic` steer the harmonic shape.

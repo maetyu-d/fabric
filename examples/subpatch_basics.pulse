@@ -1,0 +1,36 @@
+patch subpatch_basics
+
+midi in keys
+  channel 1
+end
+
+subpatch phrase
+  in midi input
+  in trigger tick
+  out midi output
+
+  quantize q
+    scale D dorian
+  end
+
+  arp arp1
+    gate 68%
+  end
+
+  input -> q
+  q -> arp1
+  tick -> arp1.trigger
+  arp1 -> output
+end
+
+clock metro
+  every 1/16
+end
+
+midi out out
+end
+
+keys -> phrase.input
+metro -> phrase.tick
+phrase.output -> out
+end

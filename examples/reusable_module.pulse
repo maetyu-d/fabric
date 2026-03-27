@@ -1,0 +1,42 @@
+patch reusable_module
+
+module phrase key_root key_mode gate_pct
+  in midi input
+  in trigger tick
+  out midi output
+
+  quantize q
+    scale $key_root $key_mode
+  end
+
+  arp arp1
+    gate $gate_pct
+  end
+
+  input -> q
+  q -> arp1
+  tick -> arp1.trigger
+  arp1 -> output
+end
+
+midi in keys
+  channel 1
+end
+
+clock metro
+  every 1/16
+end
+
+use phrase left key_root=D key_mode=dorian gate_pct=68%
+use phrase right key_root=C key_mode=minor gate_pct=54%
+
+midi out out
+end
+
+keys -> left.input
+keys -> right.input
+metro -> left.tick
+metro -> right.tick
+left.output -> out
+right.output -> out
+end

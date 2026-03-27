@@ -11,6 +11,8 @@ end
 
 growth crystal
   root C3
+  distribution poisson
+  lambda 2.8
   ratios 3/2 5/4 7/4
   family perfect weight 1.4 ratios 3/2 4/3
   family color weight 0.9 ratios 5/4 7/4 9/8

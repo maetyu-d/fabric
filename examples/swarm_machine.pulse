@@ -8,6 +8,8 @@ swarm flock
   agents 6
   center D3
   cluster 0.7
+  distribution brownian
+  seed 29
   agent 1 anchor
   agent 2 follower
   agent 3 follower

@@ -1,0 +1,30 @@
+patch markov_chain
+
+clock metro
+  every 1/8
+end
+
+markov chain1
+  start C3
+  state C3 -> Eb3 0.55 G3 0.45
+  state Eb3 -> G3 0.60 Bb3 0.40
+  state G3 -> C4 0.52 D4 0.48
+  state Bb3 -> G3 0.70 C4 0.30
+  state C4 -> G3 0.50 D4 0.50
+  state D4 -> C3 0.58 Eb3 0.42
+  seed 31
+end
+
+notes notes1
+  quantize C minor
+  gate 58%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> chain1.trigger
+chain1 -> notes1
+notes1 -> out
+end

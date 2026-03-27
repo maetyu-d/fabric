@@ -1,0 +1,27 @@
+patch choice_table
+
+clock metro
+  every 1/8
+end
+
+table choices
+  rule C3 weight 3.0
+  rule Eb3 weight 1.5
+  rule G3 weight 2.5
+  rule Bb3 weight 1.0
+  seed 24
+end
+
+notes notes1
+  quantize C minor
+  gate 62%
+  velocity 98
+end
+
+midi out out
+end
+
+metro -> choices.trigger
+choices.pitch -> notes1
+notes1 -> out
+end

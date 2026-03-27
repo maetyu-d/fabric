@@ -1,0 +1,47 @@
+patch shared_probability
+
+probability drifting
+  distribution brownian
+  burst 0.72
+end
+
+clock metro
+  every 1/16
+end
+
+random line1
+  using drifting
+  notes D3 F3 A3 C4 E4
+  mode walk
+  pass 78%
+  avoid repeat
+  max step 5
+  bias center 0.75
+  seed 41
+end
+
+field cloud1
+  using drifting
+  center D3
+  spread 7
+  density 0.58
+  emit 2
+  register mid
+  seed 19
+end
+
+notes notes1
+  quantize D dorian
+  gate 58%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> line1.trigger
+metro -> cloud1.trigger
+line1 -> notes1
+cloud1 -> notes1
+notes1 -> out
+end

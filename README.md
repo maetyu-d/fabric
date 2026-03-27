@@ -66,11 +66,14 @@ end
 Core forms:
 
 - `midi in <name>` and `midi out <name>`
-- `clock`, `pattern`, `random`, `growth`, `swarm`, `collapse`, `section`, `phrase`, `progression`
+- `clock`, `pattern`, `random`, `chance`, `table`, `markov`, `tree`
+- `field`, `formula`, `moment`, `growth`, `swarm`, `collapse`, `section`, `phrase`, `progression`
 - `motion`
 - `stages`, `lists`, `modulator`
-- `quantize`, `split`, `delay`, `loop`, `bounce`, `arp`, `warp`, `filter`, `bits`
-- `smear`, `cutup`
+- `quantize`, `sieve`, `split`, `delay`, `loop`, `bounce`, `arp`, `warp`, `filter`, `bits`
+- `groove`, `retrig`, `length`
+- `smear`, `cutup`, `slicer`, `pool`
+- `subpatch`, `module`, `use`, `probability`
 - `notes <name>`
 - `key ...`
 - `a -> b`
@@ -128,8 +131,84 @@ notes chords
 end
 ```
 
+```pulse
+probability drifting
+  distribution brownian
+  burst 0.72
+end
 
-## What Fabric In More Detail
+random line1
+  using drifting
+  notes D3 F3 A3 C4 E4
+end
+
+field cloud1
+  using drifting
+  center D3
+  spread 7
+end
+```
+
+```pulse
+module phrase key_root key_mode gate_pct
+  in midi input
+  in trigger tick
+  out midi output
+
+  quantize q
+    scale $key_root $key_mode
+  end
+
+  arp arp1
+    gate $gate_pct
+  end
+
+  input -> q
+  q -> arp1
+  tick -> arp1.trigger
+  arp1 -> output
+end
+
+use phrase left key_root=D key_mode=dorian gate_pct=68%
+use phrase right key_root=C key_mode=minor gate_pct=54%
+```
+
+```pulse
+slicer cuts
+  capture 1/4
+  slices 8
+  drift start 4ms
+  drift size 3ms
+  reverse 25%
+end
+
+pool seqcuts
+  capture 1/4
+  slices 8
+  steps 0 0 3 1 4 2 6 5
+  reverse on
+end
+
+retrig hats
+  count 3
+  spacing 22ms -> 8ms
+  velocity 94 -> 44
+  shape accelerate
+end
+
+groove shuffle
+  offsets -5ms 2ms -1ms 4ms
+  chance 85%
+end
+
+length tight
+  multiply 0.35
+  clamp 12ms..70ms
+end
+```
+
+
+## What Fabric Is In More Detail
 
 Fabric is a graph language. A Fabric patch is a set of named modules connected by explicit signal routes. Modules fall into a small number of families:
 
@@ -220,6 +299,40 @@ That patch says:
 - send the result out
 
 This is the level of readability the language should aim for.
+
+## Reuse And Composition
+
+Fabric now supports three different levels of reuse:
+
+- `probability`
+  - define one stochastic profile and reuse it with `using ...`
+- `subpatch`
+  - define a local nested patch with typed `in` and `out` ports
+- `module` / `use`
+  - define a reusable local patch fragment and instantiate it many times with arguments
+
+That lets you write larger pieces without flattening everything into one long top-level patch.
+
+## Micro-Sampling And Minimal Tools
+
+Fabric can now cover short-loop and micro-house style work too.
+
+- `groove`
+  - repeating microtiming offsets
+- `retrig`
+  - short repeat bursts with spacing and velocity curves
+- `length`
+  - note-length crushing and reshaping
+- `slicer`
+  - capture a short note window and replay slices
+- `pool`
+  - sequence captured slices explicitly with `steps ...`
+
+Useful example patches:
+
+- [micro_house_tools.pulse](/Users/md/Downloads/plugin%20language/examples/micro_house_tools.pulse)
+- [micro_slice_pool.pulse](/Users/md/Downloads/plugin%20language/examples/micro_slice_pool.pulse)
+- [shared_probability.pulse](/Users/md/Downloads/plugin%20language/examples/shared_probability.pulse)
 
 ## Signal Types
 

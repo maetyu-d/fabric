@@ -7,6 +7,7 @@ end
 random chance1
   notes D3 F3 A3 C4 E4
   mode walk
+  distribution gaussian
   pass 70%
   avoid repeat
   max step 5

@@ -1,0 +1,30 @@
+patch formula_line
+
+clock metro
+  every 1/16
+end
+
+formula line1
+  pitch C3 Eb3 G3 Bb3
+  rhythm 1/8 1/16 1/8 1/16
+  gate 72% 40% 78% 52%
+  transpose 0 12 0 -12
+  lengths 2 1 2 1
+  rotate every 4
+end
+
+notes notes1
+  quantize C minor
+  gate 58%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> line1.trigger
+line1 -> notes1
+line1.time -> notes1.time
+line1.gate -> notes1.gate
+notes1 -> out
+end

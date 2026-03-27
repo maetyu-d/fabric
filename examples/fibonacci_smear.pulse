@@ -1,31 +1,31 @@
 patch fibonacci_smear
 
-generate clock metro
+clock metro
   every 1/16
 end
 
-generate fibonacci fib1
+fibonacci fib1
   length 8
   map 0 2 3 5 7
 end
 
-project to_notes notes1
+notes notes1
   scale D minor
   range C2..C5
   velocity 96
 end
 
-memory smear bergson
+smear bergson
   keep 3
   weights 0.60 0.25 0.15
   drift weights 0.05
 end
 
-output midi out
+midi out out
 end
 
-connect metro -> fib1.trigger
-connect fib1 -> notes1
-connect notes1 -> bergson
-connect bergson -> out
+metro -> fib1.trigger
+fib1 -> notes1
+notes1 -> bergson
+bergson -> out
 end

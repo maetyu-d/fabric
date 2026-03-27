@@ -41,6 +41,19 @@ void Engine::setInputEvents(const std::string& moduleName, const std::vector<Eve
     }
 }
 
+void Engine::setNodeMode(const std::string& moduleName, NodeProcessingMode mode)
+{
+    if (runtime_) {
+        runtime_->setNodeMode(moduleName, mode);
+    }
+}
+
+NodeProcessingMode Engine::nodeMode(const std::string& moduleName) const
+{
+    if (!runtime_) return NodeProcessingMode::normal;
+    return runtime_->nodeMode(moduleName);
+}
+
 const std::vector<Diagnostic>& Engine::diagnostics() const
 {
     return diagnostics_;
@@ -79,6 +92,12 @@ std::optional<std::string> Engine::activeStateLabel(const std::string& moduleNam
 {
     if (!runtime_) return std::nullopt;
     return runtime_->activeStateLabel(moduleName);
+}
+
+std::optional<ModulatorStateSnapshot> Engine::modulatorState(const std::string& moduleName) const
+{
+    if (!runtime_) return std::nullopt;
+    return runtime_->modulatorState(moduleName);
 }
 
 } // namespace pulse

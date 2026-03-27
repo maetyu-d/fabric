@@ -1,29 +1,29 @@
 patch section_controlled
 
-generate clock metro
+clock metro
   every 1/64
 end
 
-generate clock form_clock
+clock form_clock
   every 1/8
 end
 
-generate pattern roots
+pattern roots
   notes C3 A2 F3 G2 E3 D3
 end
 
-generate section form
+section form
   start verse
   section verse tonic 2 dominant 2
   section chorus tonic 2 subdominant 2 dominant 2 tonic 2
 end
 
-shape lists lengths
+lists lengths
   time 420ms
   gate 95%
 end
 
-project to_notes mover
+notes mover
   mode poly
   voices 6
   steal oldest
@@ -40,15 +40,15 @@ project to_notes mover
   velocity 100
 end
 
-output midi out
+midi out out
 end
 
-connect metro -> roots.trigger
-connect metro -> form.trigger
-connect form_clock -> form.advance
-connect roots -> mover
-connect form -> mover.phrase
-connect lengths.time -> mover.time
-connect lengths.gate -> mover.gate
-connect mover -> out
+metro -> roots.trigger
+metro -> form.trigger
+form_clock -> form.advance
+roots -> mover
+form -> mover.phrase
+lengths.time -> mover.time
+lengths.gate -> mover.gate
+mover -> out
 end

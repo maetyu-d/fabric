@@ -1,21 +1,21 @@
 patch section_cc_recall
 
-generate clock metro
+clock metro
   every 1/64
 end
 
-generate pattern roots
+pattern roots
   notes C3 A2 F3 G2 E3 D3
 end
 
-shape stages selector
+stages selector
   mode loop
   stage 1 level 10 time 300ms curve linear
   stage 2 level 70 time 300ms curve linear
   stage 3 level 110 time 300ms curve linear
 end
 
-generate section form
+section form
   start verse
   select by cc
   recall verse 10 chorus 70 bridge 110
@@ -24,12 +24,12 @@ generate section form
   section bridge subdominant 2 dominant 2 tonic 2
 end
 
-shape lists lengths
+lists lengths
   time 420ms
   gate 95%
 end
 
-project to_notes mover
+notes mover
   mode poly
   voices 6
   steal oldest
@@ -46,16 +46,16 @@ project to_notes mover
   velocity 100
 end
 
-output midi out
+midi out out
 end
 
-connect metro -> roots.trigger
-connect metro -> selector.trigger
-connect metro -> form.trigger
-connect selector -> form.select
-connect roots -> mover
-connect form -> mover.phrase
-connect lengths.time -> mover.time
-connect lengths.gate -> mover.gate
-connect mover -> out
+metro -> roots.trigger
+metro -> selector.trigger
+metro -> form.trigger
+selector -> form.select
+roots -> mover
+form -> mover.phrase
+lengths.time -> mover.time
+lengths.gate -> mover.gate
+mover -> out
 end

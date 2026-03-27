@@ -1,0 +1,26 @@
+patch tutorial_live_quantize_arp
+
+midi in keys
+  channel 1
+end
+
+clock metro
+  every 1/16
+end
+
+quantize in_key
+  key D dorian
+end
+
+arp arp1
+  gate 68%
+end
+
+midi out out
+end
+
+keys -> in_key
+in_key -> arp1
+metro -> arp1.trigger
+arp1 -> out
+end

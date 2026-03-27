@@ -14,6 +14,109 @@ It is a patch language for:
 
 The goal is to make strange and powerful musical systems readable as plain text.
 
+## Surface Syntax
+
+Fabric uses short, readable forms for the most common things.
+
+You write:
+
+```pulse
+patch first_steps
+
+key D dorian
+
+midi in keys
+  channel 1
+end
+
+clock metro
+  every 1/16
+end
+
+pattern riff
+  notes D3 F3 A3 C4
+  order up_down
+end
+
+notes player
+  key D dorian
+  gate 60%
+end
+
+midi out out
+end
+
+metro -> riff.trigger
+riff -> player
+player -> out
+end
+```
+
+Core forms:
+
+- `midi in <name>` and `midi out <name>`
+- `clock`, `pattern`, `random`, `growth`, `swarm`, `collapse`, `section`, `phrase`, `progression`
+- `motion`
+- `stages`, `lists`, `modulator`
+- `quantize`, `split`, `delay`, `loop`, `bounce`, `arp`, `warp`, `filter`, `bits`
+- `smear`, `cutup`
+- `notes <name>`
+- `key ...`
+- `a -> b`
+
+Property language is also kept short in common places:
+
+- inside `notes`:
+  - `quantize D dorian` instead of `scale D dorian`
+- inside `random`:
+  - `held notes` instead of `from held notes`
+- inside `stage` lines:
+  - `ch` instead of `channel`
+  - `to` instead of `level`
+  - `for` or `in` instead of `time`
+
+For example:
+
+```pulse
+modulator mod1
+  channels 2
+  mode loop
+  stage 1 ch 1 to 0.15 for 70ms curve linear
+  stage 2 ch 1 to 0.85 for 110ms curve smooth
+end
+```
+
+The same idea extends into the more advanced modules too:
+
+```pulse
+growth crystal
+  root C3
+  family perfect weight 1.4 ratios 3/2 4/3
+  family color weight 0.9 ratios 5/4 7/4 9/8
+  target tonic
+  add when stable
+  prune when unstable
+  max notes 8
+end
+```
+
+```pulse
+collapse engine1
+  ruleset stable avoid tonic no repeated intervals
+  on collapse cycle broken release stable
+  recover to tonic
+  follow phrase
+end
+```
+
+```pulse
+notes chords
+  chord scale7
+  movement nearest
+  arrive on 4
+end
+```
+
 ## Design Goals
 
 Fabric is designed around six goals:
@@ -74,9 +177,9 @@ Each module:
 Connections are written explicitly:
 
 ```pulse
-connect keys -> motion
-connect motion.pulse1 -> bass.trigger
-connect bass -> out
+keys -> motion
+motion.pulse1 -> bass.trigger
+bass -> out
 ```
 
 ## A First Example
@@ -87,47 +190,47 @@ patch live_memory_machine
 scale D minor
 tempo 120
 
-input midi keys
+midi in keys
   channel 1
 end
 
-analyze motion motion1
+motion motion1
   channels 8
   space 0.4
   clocked on
 end
 
-transform quantize in_key
+quantize in_key
   scale D minor
 end
 
-transform split bands
+split bands
   by note
   low below C3
   mid C3..B4
   high above B4
 end
 
-transform delay low_late
+delay low_late
   time 40ms
 end
 
-memory smear afterimage
+smear afterimage
   keep 3 notes
   weights 0.60 0.25 0.15
   drift weights 0.05
 end
 
-output midi out
+midi out out
 end
 
-connect keys -> motion1
-connect keys -> in_key
-connect in_key -> bands
-connect bands.low -> low_late
-connect bands.mid -> afterimage
-connect low_late -> out
-connect afterimage -> out
+keys -> motion1
+keys -> in_key
+in_key -> bands
+bands.low -> low_late
+bands.mid -> afterimage
+low_late -> out
+afterimage -> out
 end
 ```
 
@@ -223,7 +326,7 @@ Examples:
 Example:
 
 ```pulse
-input midi keys
+midi in keys
   channel any
 end
 ```
@@ -239,7 +342,7 @@ They do not just pass MIDI through. They extract motion, activity, and event str
 Example:
 
 ```pulse
-analyze motion tracker
+motion tracker
   channels 8
   space 0.35
   clocked on
@@ -283,7 +386,7 @@ Examples:
 Simple example:
 
 ```pulse
-generate clock metro
+clock metro
   every 1/16
 end
 ```
@@ -291,7 +394,7 @@ end
 Algorithmic example:
 
 ```pulse
-generate fibonacci fib1
+fibonacci fib1
   length 8
   map 0 2 3 5 7
   use as rhythm
@@ -315,7 +418,7 @@ It covers:
 Example:
 
 ```pulse
-shape stages mod_a
+stages mod_a
   mode loop
   stages 13
 
@@ -328,7 +431,7 @@ end
 MARF-like example:
 
 ```pulse
-shape lists marf1
+lists marf1
   pitch C3 E3 G3 Bb3
   time 80ms 140ms 220ms 500ms
   gate 30% 60% 90% 40%
@@ -366,20 +469,20 @@ Examples:
 Examples:
 
 ```pulse
-transform quantize in_key
+quantize in_key
   scale C minor
 end
 ```
 
 ```pulse
-transform filter high_notes
+filter high_notes
   type note
   pass above C4
 end
 ```
 
 ```pulse
-transform bits crush_velocity
+bits crush_velocity
   target velocity
   and 11110000b
 end
@@ -402,7 +505,7 @@ Examples:
 Example:
 
 ```pulse
-memory smear bergson
+smear bergson
   keep 3 notes
   weights 0.60 0.25 0.15
   drift weights 0.05
@@ -412,7 +515,7 @@ end
 Cut-up example:
 
 ```pulse
-memory cutup burroughs
+cutup burroughs
   slice 1/16..1 beat
   tag automatically
   favor harmonic
@@ -435,7 +538,7 @@ Examples:
 Example:
 
 ```pulse
-project to_notes notes1
+notes notes1
   scale D dorian
   range C2..C6
 end
@@ -448,7 +551,7 @@ Output modules emit final results.
 Example:
 
 ```pulse
-output midi out
+midi out out
 end
 ```
 
@@ -479,11 +582,11 @@ end
 Examples:
 
 ```pulse
-generate clock metro
+clock metro
   every 1/16
 end
 
-transform delay late
+delay late
   time 80ms
 end
 ```
@@ -491,19 +594,19 @@ end
 ## Connections
 
 ```text
-connect <from> -> <to>
-connect <from>.<port> -> <to>
-connect <from> -> <to>.<port>
-connect <from>.<port> -> <to>.<port>
+<from> -> <to>
+<from>.<port> -> <to>
+<from> -> <to>.<port>
+<from>.<port> -> <to>.<port>
 ```
 
 Examples:
 
 ```pulse
-connect keys -> split1
-connect split1.high -> arp1
-connect motion1.speed -> mod_a.rate
-connect metro -> seq1.trigger
+keys -> split1
+split1.high -> arp1
+motion1.speed -> mod_a.rate
+metro -> seq1.trigger
 ```
 
 ## Properties
@@ -534,7 +637,7 @@ Use `#`:
 
 ```pulse
 # blur the middle register through note memory
-memory smear bergson
+smear bergson
   keep 3 notes
 end
 ```
@@ -571,7 +674,7 @@ A four-channel staged slope engine that can behave like:
 Example:
 
 ```pulse
-shape stages mod4
+stages mod4
   channels 4
   stages 13
   overlap on
@@ -597,17 +700,17 @@ Derive pulses, speed events, and activity gates from incoming MIDI motion.
 Example:
 
 ```pulse
-input midi performer
+midi in performer
   channel 1
 end
 
-analyze motion motion1
+motion motion1
   channels 8
   space 0.4
   clocked on
 end
 
-connect performer -> motion1
+performer -> motion1
 ```
 
 This implies:
@@ -623,7 +726,7 @@ Take incoming material and force it into harmonic structure.
 Example:
 
 ```pulse
-transform quantize lock
+quantize lock
   scale A minor
 end
 ```
@@ -645,7 +748,7 @@ This belongs naturally in `shape`.
 Example:
 
 ```pulse
-generate fibonacci fib1
+fibonacci fib1
   length 8
   use as rhythm
 end
@@ -654,7 +757,7 @@ end
 or:
 
 ```pulse
-generate pattern custom
+pattern custom
   series 1 1 2 3 5 8 13
   loop on
 end
@@ -669,14 +772,14 @@ These should be musical filters for MIDI data, not audio filters.
 Examples:
 
 ```pulse
-transform filter low_notes
+filter low_notes
   type note
   pass below C4
 end
 ```
 
 ```pulse
-transform filter strong_hits
+filter strong_hits
   type velocity
   pass above 90
 end
@@ -689,7 +792,7 @@ Fabric should allow low-level operations, but keep them readable and scoped.
 Example:
 
 ```pulse
-transform bits xor_vel
+bits xor_vel
   target velocity
   xor 00001111b
 end
@@ -709,22 +812,22 @@ Not arbitrary raw byte hacking.
 Example:
 
 ```pulse
-transform split bands
+split bands
   by note
   low below C3
   mid C3..B4
   high above B4
 end
 
-transform delay low_late
+delay low_late
   time 30ms
 end
 
-transform delay mid_late
+delay mid_late
   time 80ms
 end
 
-transform delay high_late
+delay high_late
   time 140ms
 end
 ```
@@ -741,7 +844,7 @@ This implies:
 Example:
 
 ```pulse
-transform bounce ball
+bounce ball
   count 8
   spacing 240ms -> 20ms
   velocity 110 -> 40
@@ -760,7 +863,7 @@ This is a temporal gesture processor:
 Example:
 
 ```pulse
-transform loop phrase1
+loop phrase1
   capture 1 bar
   playback on
   overdub off
@@ -780,7 +883,7 @@ This means the language should distinguish:
 Example:
 
 ```pulse
-memory smear bergson
+smear bergson
   keep 3 notes
   weights 0.60 0.25 0.15
   drift weights 0.05
@@ -811,7 +914,7 @@ This likely belongs in `project` or in advanced `memory/project` modules rather 
 Example:
 
 ```pulse
-generate growth crystal
+growth crystal
   root C2
   ratios 3/2 5/4 7/4
   add when stable
@@ -827,7 +930,7 @@ This introduces self-organizing harmony as a generator family.
 Example:
 
 ```pulse
-generate swarm voices
+swarm voices
   agents 6
 
   agent 1 type anchor
@@ -850,7 +953,7 @@ This belongs in the advanced generative layer.
 Example:
 
 ```pulse
-generate collapse engine1
+collapse engine1
   rules
     no repeated intervals
     max step 2
@@ -868,7 +971,7 @@ This means Fabric should allow a readable rule syntax for some advanced generato
 Example:
 
 ```pulse
-memory cutup burroughs
+cutup burroughs
   slice 1/16..1 beat
   tag automatically
   favor harmonic
@@ -888,7 +991,7 @@ This adds:
 Example:
 
 ```pulse
-shape lists marf1
+lists marf1
   pitch C3 E3 G3 Bb3
   time 80ms 140ms 220ms 500ms
   gate 30% 60% 90% 40%
@@ -1073,7 +1176,7 @@ Inside a JUCE MIDI effect plugin, the architecture could look like:
 For each `processBlock`:
 
 1. Read host transport and tempo if available.
-2. Feed incoming MIDI into `input midi` nodes.
+2. Feed incoming MIDI into `midi in` nodes.
 3. Advance clocks and timed shapes.
 4. Run graph nodes in topological order.
 5. Route typed events between nodes.
@@ -1172,14 +1275,17 @@ The strongest next implementation move is:
 4. implement parser and validator
 5. implement a minimal runtime graph
 6. build these first nodes:
-   - `input midi`
-   - `generate clock`
-   - `shape stages`
-   - `transform quantize`
-   - `transform split`
-   - `transform delay`
-   - `transform arp`
-   - `output midi`
+   - `midi in`
+   - `clock`
+   - `stages`
+   - `quantize`
+   - `split`
+   - `delay`
+   - `arp`
+   - `midi out`
 7. add `analyze motion` immediately after
 
 That would give you a real prototype quickly while keeping the door open for the more radical modules later.
+# Tutorials
+
+Start with the guided lesson set in [tutorials/README.md](/Users/md/Downloads/plugin%20language/tutorials/README.md). It includes 15 progressive tutorials, from a first clocked pattern to growth, collapse, and the complex modulator.

@@ -1,10 +1,10 @@
 patch random_machine
 
-generate clock metro
+clock metro
   every 1/32
 end
 
-generate random chance1
+random chance1
   notes D3 F3 A3 C4 E4
   mode walk
   pass 70%
@@ -14,16 +14,16 @@ generate random chance1
   seed 42
 end
 
-project to_notes notes1
-  scale D minor
+notes notes1
+  key D minor
   range C2..C5
   velocity 98
 end
 
-output midi out
+midi out out
 end
 
-connect metro -> chance1.trigger
-connect chance1 -> notes1
-connect notes1 -> out
+metro -> chance1.trigger
+chance1 -> notes1
+notes1 -> out
 end

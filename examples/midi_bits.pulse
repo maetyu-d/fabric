@@ -1,0 +1,16 @@
+patch midi_bits
+
+midi in keys
+end
+
+bits crush_velocity
+  target velocity
+  and 11110000b
+end
+
+midi out out
+end
+
+keys -> crush_velocity
+crush_velocity -> out
+end

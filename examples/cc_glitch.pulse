@@ -1,0 +1,19 @@
+patch cc_glitch
+
+midi in keys
+end
+
+bits glitch_modwheel
+  status cc
+  cc 1
+  channel 1
+  target data2
+  xor 00011111b
+end
+
+midi out out
+end
+
+keys -> glitch_modwheel
+glitch_modwheel -> out
+end

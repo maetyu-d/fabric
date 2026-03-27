@@ -1,0 +1,54 @@
+patch modulated_modulator
+
+clock metro
+  every 1/16
+  swing 56%
+end
+
+stages mod_depth
+  mode loop
+  stage 1 to 0.20 for 80ms curve linear
+  stage 2 to 0.95 for 120ms curve smooth
+  stage 3 to 0.35 for 180ms curve exp
+end
+
+stages mod_time
+  mode loop
+  stage 1 to 0.08 for 90ms curve linear
+  stage 2 to 0.22 for 140ms curve smooth
+  stage 3 to 0.11 for 200ms curve exp
+end
+
+modulator mod1
+  channels 2
+  mode loop
+  stage 1 ch 1 to 0.15 for 70ms curve linear
+  stage 2 ch 1 to 0.85 for 110ms curve smooth
+  stage 3 ch 1 to 0.30 for 160ms curve exp
+  stage 1 ch 2 to 0.10 for 100ms curve linear
+  stage 2 ch 2 to 0.70 for 150ms curve smooth
+  stage 3 ch 2 to 0.20 for 220ms curve log
+end
+
+pattern seq1
+  notes C3 D3 F3 A3
+  order up_down
+end
+
+notes notes1
+  quantize D dorian
+  range C2..C5
+end
+
+midi out out
+end
+
+metro -> seq1.trigger
+metro -> mod1.trigger
+seq1 -> notes1
+mod_depth -> mod1.ch1_s2_level
+mod_time -> mod1.ch2_s1_time
+mod1.ch1 -> notes1.velocity
+mod1.ch2 -> notes1.time
+notes1 -> out
+end

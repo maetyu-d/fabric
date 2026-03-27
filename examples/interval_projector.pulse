@@ -1,20 +1,20 @@
 patch interval_projector
 
-generate clock metro
+clock metro
   every 1/16
 end
 
-generate pattern roots
+pattern roots
   notes D3 F3 A3 C4
   order up_down
 end
 
-shape lists lengths
+lists lengths
   time 450ms
   gate 95%
 end
 
-project to_notes stacked
+notes stacked
   mode poly
   voices 5
   steal quietest
@@ -24,12 +24,12 @@ project to_notes stacked
   velocity 100
 end
 
-output midi out
+midi out out
 end
 
-connect metro -> roots.trigger
-connect roots -> stacked
-connect lengths.time -> stacked.time
-connect lengths.gate -> stacked.gate
-connect stacked -> out
+metro -> roots.trigger
+roots -> stacked
+lengths.time -> stacked.time
+lengths.gate -> stacked.gate
+stacked -> out
 end

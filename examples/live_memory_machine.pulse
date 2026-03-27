@@ -3,45 +3,45 @@ patch live_memory_machine
 scale D minor
 tempo 120
 
-input midi keys
+midi in keys
   channel 1
 end
 
-analyze motion motion1
+motion motion1
   channels 8
   space 0.4
   clocked on
 end
 
-transform quantize in_key
+quantize in_key
   scale D minor
 end
 
-transform split bands
+split bands
   by note
   low below C3
   mid C3..B4
   high above B4
 end
 
-transform delay low_late
+delay low_late
   time 40ms
 end
 
-memory smear afterimage
+smear afterimage
   keep 3 notes
   weights 0.60 0.25 0.15
   drift weights 0.05
 end
 
-output midi out
+midi out out
 end
 
-connect keys -> motion1
-connect keys -> in_key
-connect in_key -> bands
-connect bands.low -> low_late
-connect bands.mid -> afterimage
-connect low_late -> out
-connect afterimage -> out
+keys -> motion1
+keys -> in_key
+in_key -> bands
+bands.low -> low_late
+bands.mid -> afterimage
+low_late -> out
+afterimage -> out
 end

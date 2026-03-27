@@ -12,6 +12,12 @@
 
 namespace pulse {
 
+enum class NodeProcessingMode {
+    normal,
+    bypass,
+    mute
+};
+
 struct Event {
     SignalType type = SignalType::unknown;
     double time = 0.0;
@@ -53,6 +59,18 @@ struct ProcessContext {
     bool syncToTransport = true;
 };
 
+struct ModulatorChannelStateSnapshot {
+    double level = 0.0;
+    std::vector<int> activeStages;
+};
+
+struct ModulatorStateSnapshot {
+    int channelCount = 0;
+    std::string mode;
+    bool overlapEnabled = false;
+    std::vector<ModulatorChannelStateSnapshot> channels;
+};
+
 class RuntimeNode {
 public:
     virtual ~RuntimeNode() = default;
@@ -67,6 +85,7 @@ public:
     [[nodiscard]] virtual std::optional<double> currentSectionPhase() const;
     [[nodiscard]] virtual std::optional<std::uint64_t> sectionAdvanceCount() const;
     [[nodiscard]] virtual std::optional<std::string> activeStateLabel() const;
+    [[nodiscard]] virtual std::optional<ModulatorStateSnapshot> modulatorState() const;
 };
 
 class StubRuntimeNode final : public RuntimeNode {
@@ -93,6 +112,8 @@ public:
     void reset(double sampleRate);
     void process(const ProcessContext& context);
     void setInputEvents(const std::string& moduleName, const std::vector<Event>& events);
+    void setNodeMode(const std::string& moduleName, NodeProcessingMode mode);
+    [[nodiscard]] NodeProcessingMode nodeMode(const std::string& moduleName) const;
 
     [[nodiscard]] const CompiledPatch& patch() const;
     [[nodiscard]] const EventBuffer* outputBuffer(std::size_t nodeIndex, const std::string& port) const;
@@ -103,6 +124,7 @@ public:
     [[nodiscard]] std::optional<double> currentSectionPhase(const std::string& moduleName) const;
     [[nodiscard]] std::optional<std::uint64_t> sectionAdvanceCount(const std::string& moduleName) const;
     [[nodiscard]] std::optional<std::string> activeStateLabel(const std::string& moduleName) const;
+    [[nodiscard]] std::optional<ModulatorStateSnapshot> modulatorState(const std::string& moduleName) const;
 
 private:
     struct PortBuffers {
@@ -114,6 +136,7 @@ private:
     std::vector<std::unique_ptr<RuntimeNode>> nodes_;
     std::vector<PortBuffers> buffers_;
     std::unordered_map<std::string, std::vector<Event>> renderedOutputs_;
+    std::vector<NodeProcessingMode> nodeModes_;
 };
 
 } // namespace pulse

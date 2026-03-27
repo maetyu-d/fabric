@@ -1,0 +1,33 @@
+patch warped_pitch_space
+
+clock metro
+  every 1/16
+end
+
+pattern roots
+  notes C3 D3 E3 G3
+  order up_down
+end
+
+warp warp1
+  fold C near F#
+  wormhole every random 3..6
+  wormhole to A2 Eb4 F#4
+  amount 0.72
+  seed 19
+end
+
+notes notes1
+  scale C lydian
+  range C2..C5
+  velocity 102
+end
+
+midi out out
+end
+
+metro -> roots.trigger
+roots -> warp1.pitch
+warp1 -> notes1
+notes1 -> out
+end

@@ -50,7 +50,7 @@ add_executable(pulse_demo
 
 target_link_libraries(pulse_demo PRIVATE pulse)
 
-juce_add_plugin(PulsePlugin
+juce_add_plugin(FabricPlugin
   COMPANY_NAME "matd.space"
   BUNDLE_ID "space.matd.fabric"
   VERSION ${PROJECT_VERSION}
@@ -62,24 +62,25 @@ juce_add_plugin(PulsePlugin
   COPY_PLUGIN_AFTER_BUILD FALSE
   PLUGIN_MANUFACTURER_CODE MtdS
   PLUGIN_CODE Fbrc
-  FORMATS AU Standalone
+  FORMATS AU VST3 Standalone
   PRODUCT_NAME "Fabric"
   AU_MAIN_TYPE kAudioUnitType_MIDIProcessor
 )
 
-target_sources(PulsePlugin PRIVATE
-  Source/PluginEditor.cpp
-  Source/PluginEditor.h
-  Source/PluginProcessor.cpp
-  Source/PluginProcessor.h
+target_sources(FabricPlugin PRIVATE
+  Source/FabricEditor.cpp
+  Source/FabricEditor.h
+  Source/FabricProcessor.cpp
+  Source/FabricProcessor.h
 )
 
-target_compile_definitions(PulsePlugin PRIVATE
+target_compile_definitions(FabricPlugin PRIVATE
   JUCE_WEB_BROWSER=0
   JUCE_USE_CURL=0
+  JUCE_FORCE_USE_LEGACY_PARAM_IDS=1
 )
 
-target_link_libraries(PulsePlugin
+target_link_libraries(FabricPlugin
   PRIVATE
     pulse
     juce::juce_audio_utils
@@ -90,4 +91,4 @@ target_link_libraries(PulsePlugin
     juce::juce_recommended_warning_flags
 )
 
-juce_generate_juce_header(PulsePlugin)
+juce_generate_juce_header(FabricPlugin)

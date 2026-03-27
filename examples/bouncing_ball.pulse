@@ -1,30 +1,30 @@
 patch bouncing_ball
 
-generate clock metro
+clock metro
   every 1/4
 end
 
-generate pattern seed
+pattern seed
   notes C3
 end
 
-project to_notes notes1
+notes notes1
   scale C minor
   gate 85%
   velocity 104
 end
 
-transform bounce ball
+bounce ball
   count 8
   spacing 180ms -> 25ms
   velocity 112 -> 36
 end
 
-output midi out
+midi out out
 end
 
-connect metro -> seed.trigger
-connect seed -> notes1
-connect notes1 -> ball
-connect ball -> out
+metro -> seed.trigger
+seed -> notes1
+notes1 -> ball
+ball -> out
 end

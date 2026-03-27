@@ -1,0 +1,32 @@
+patch swarm_machine
+
+clock metro
+  every 1/16
+end
+
+swarm flock
+  agents 6
+  center D3
+  cluster 0.7
+  agent 1 anchor
+  agent 2 follower
+  agent 3 follower
+  agent 4 rebel
+  agent 5 rebel
+  agent 6 follower
+end
+
+notes notes1
+  scale D dorian
+  range C2..C5
+  velocity 98
+  gate 58%
+end
+
+midi out out
+end
+
+metro -> flock.trigger
+flock -> notes1
+notes1 -> out
+end

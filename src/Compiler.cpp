@@ -49,6 +49,24 @@ std::vector<PortInfo> defaultInputs(const Module& module)
         return { makePort("trigger", SignalType::trigger), makePort("rate", SignalType::value) };
     }
 
+    if (module.family == ModuleFamily::shape && module.kind == "modulator") {
+        std::vector<PortInfo> ports { makePort("trigger", SignalType::trigger), makePort("rate", SignalType::value) };
+        for (int channel = 1; channel <= 4; ++channel) {
+            ports.push_back(makePort("ch" + std::to_string(channel) + "_trigger", SignalType::trigger));
+            ports.push_back(makePort("ch" + std::to_string(channel) + "_reset", SignalType::trigger));
+            ports.push_back(makePort("ch" + std::to_string(channel) + "_select", SignalType::value));
+            for (int stage = 1; stage <= 13; ++stage) {
+                const auto prefix = "ch" + std::to_string(channel) + "_s" + std::to_string(stage) + "_";
+                ports.push_back(makePort(prefix + "trigger", SignalType::trigger));
+                ports.push_back(makePort(prefix + "reset", SignalType::trigger));
+                ports.push_back(makePort(prefix + "level", SignalType::value));
+                ports.push_back(makePort(prefix + "time", SignalType::value));
+                ports.push_back(makePort(prefix + "curve", SignalType::value));
+            }
+        }
+        return ports;
+    }
+
     if (module.family == ModuleFamily::shape && module.kind == "lists") {
         return {
             makePort("note", SignalType::midi),
@@ -155,6 +173,24 @@ std::vector<PortInfo> defaultOutputs(const Module& module)
 
     if (module.family == ModuleFamily::shape && module.kind == "stages") {
         return { makePort("out", SignalType::value) };
+    }
+
+    if (module.family == ModuleFamily::shape && module.kind == "modulator") {
+        std::vector<PortInfo> ports {
+            makePort("out", SignalType::value),
+            makePort("ch1", SignalType::value),
+            makePort("ch2", SignalType::value),
+            makePort("ch3", SignalType::value),
+            makePort("ch4", SignalType::value)
+        };
+        for (int channel = 1; channel <= 4; ++channel) {
+            for (int stage = 1; stage <= 13; ++stage) {
+                const auto prefix = "ch" + std::to_string(channel) + "_s" + std::to_string(stage) + "_";
+                ports.push_back(makePort(prefix + "gate", SignalType::gate));
+                ports.push_back(makePort(prefix + "end", SignalType::trigger));
+            }
+        }
+        return ports;
     }
 
     if (module.family == ModuleFamily::shape && module.kind == "lists") {

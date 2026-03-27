@@ -1,0 +1,33 @@
+patch loop_into_cutup
+
+midi in keys
+  channel 1
+end
+
+clock metro
+  every 1/16
+end
+
+loop phrase1
+  capture 1/8
+  playback on
+  overdub off
+  quantize to 1/32
+end
+
+cutup burroughs
+  capture 1/16
+  slice 2
+  keep continuity 0.35
+  favor harmonic
+  seed 42
+end
+
+midi out out
+end
+
+keys -> phrase1
+phrase1 -> burroughs.in
+metro -> burroughs.trigger
+burroughs -> out
+end

@@ -1,0 +1,44 @@
+patch crystal_growth
+
+clock metro
+  every 1/16
+end
+
+progression plan
+  targets tonic dominant tonic subdominant tonic
+  lengths 2 2 2 2 4
+end
+
+growth crystal
+  root C3
+  ratios 3/2 5/4 7/4
+  family perfect weight 1.4 ratios 3/2 4/3
+  family color weight 0.9 ratios 5/4 7/4 9/8
+  register mid
+  target tonic
+  add when stable
+  prune when unstable
+  prune strength 2
+  fold octaves just
+  map growth to density
+  density drives rate
+  max notes 8
+end
+
+notes notes1
+  quantize C lydian
+  range C2..C5
+  velocity 98
+end
+
+midi out out
+end
+
+metro -> crystal.trigger
+metro -> plan.trigger
+plan -> crystal.phrase
+crystal -> notes1
+crystal.density -> notes1.velocity
+crystal.gate -> notes1.gate
+notes1 -> out
+end

@@ -17,6 +17,8 @@ public:
     void reset(double sampleRate, std::uint32_t blockSize);
     void process(const ProcessContext& context);
     void setInputEvents(const std::string& moduleName, const std::vector<Event>& events);
+    void setNodeMode(const std::string& moduleName, NodeProcessingMode mode);
+    [[nodiscard]] NodeProcessingMode nodeMode(const std::string& moduleName) const;
 
     [[nodiscard]] const std::vector<Diagnostic>& diagnostics() const;
     [[nodiscard]] const RuntimeGraph* graph() const;
@@ -25,6 +27,7 @@ public:
     [[nodiscard]] std::optional<double> currentSectionPhase(const std::string& moduleName) const;
     [[nodiscard]] std::optional<std::uint64_t> sectionAdvanceCount(const std::string& moduleName) const;
     [[nodiscard]] std::optional<std::string> activeStateLabel(const std::string& moduleName) const;
+    [[nodiscard]] std::optional<ModulatorStateSnapshot> modulatorState(const std::string& moduleName) const;
 
 private:
     Parser parser_;

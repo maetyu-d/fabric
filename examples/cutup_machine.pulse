@@ -1,14 +1,14 @@
 patch cutup_machine
 
-input midi keys
+midi in keys
   channel 1
 end
 
-generate clock metro
+clock metro
   every 1/32
 end
 
-memory cutup burroughs
+cutup burroughs
   capture 1/16
   slice 2
   keep continuity 0.35
@@ -16,10 +16,10 @@ memory cutup burroughs
   seed 42
 end
 
-output midi out
+midi out out
 end
 
-connect keys -> burroughs.in
-connect metro -> burroughs.trigger
-connect burroughs -> out
+keys -> burroughs.in
+metro -> burroughs.trigger
+burroughs -> out
 end

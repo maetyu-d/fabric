@@ -1,31 +1,31 @@
 patch motion_to_notes
 
-input midi keys
+midi in keys
   channel 1
 end
 
-generate clock metro
+clock metro
   every 1/16
 end
 
-analyze motion motion1
+motion motion1
   channels 8
   space 0.4
   clocked on
 end
 
-project to_notes notes1
+notes notes1
   scale D minor
   range C2..C5
   velocity 100
 end
 
-output midi out
+midi out out
 end
 
-connect keys -> motion1
-connect metro -> motion1.clock
-connect motion1.speed -> notes1.values
-connect motion1.even -> notes1.gate
-connect notes1 -> out
+keys -> motion1
+metro -> motion1.clock
+motion1.speed -> notes1.values
+motion1.even -> notes1.gate
+notes1 -> out
 end

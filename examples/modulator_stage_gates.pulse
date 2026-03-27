@@ -1,0 +1,36 @@
+patch modulator_stage_gates
+
+clock metro
+  every 1/16
+end
+
+modulator mod1
+  channels 1
+  mode loop
+  overlap on
+  stage 1 channel 1 level 0.18 time 80ms overlap 12ms curve linear
+  stage 2 channel 1 level 0.92 time 120ms overlap 18ms curve smooth
+  stage 3 channel 1 level 0.30 time 180ms overlap 24ms curve exp
+end
+
+pattern riff
+  notes C3 D3 F3 A3
+  order up_down
+end
+
+notes notes1
+  scale D dorian
+  range C2..C5
+  velocity 104
+end
+
+midi out out
+end
+
+metro -> mod1.trigger
+mod1.ch1_s1_end -> riff.trigger
+riff -> notes1
+mod1.ch1_s2_gate -> notes1.gate
+mod1.ch1 -> notes1.time
+notes1 -> out
+end

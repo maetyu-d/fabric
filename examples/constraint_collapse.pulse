@@ -1,0 +1,51 @@
+patch constraint_collapse
+
+clock metro
+  every 1/16
+end
+
+progression form
+  targets tonic dominant tonic subdominant tonic
+  lengths 2 2 2 2 4
+end
+
+section scenes
+  start verse
+  section verse tonic 2 dominant 2
+  section chorus dominant 2 tonic 2
+  section bridge subdominant 2 tonic 2
+end
+
+collapse engine1
+  notes C3 D3 Eb3 G3 A3 Bb3
+  root C3
+  ruleset stable avoid tonic no repeated intervals max 2 semitone steps prefer center 0.65 target tonic reform gentle recover to target follow phrase
+  ruleset broken from stable avoid target max 5 semitone steps prefer center 0.2 target dominant reform wild recover to dominant mutate 4
+  ruleset release from stable avoid subdominant max 3 semitone steps prefer center 0.8 reform rotate_root recover to tonic
+  use stable
+  on collapse cycle broken release stable
+  on section verse use stable
+  on section chorus blend broken 0.65
+  on section bridge blend release 0.75
+  on collapse mutate 2
+  seed 13
+end
+
+notes notes1
+  quantize C minor
+  range C2..C5
+  velocity 100
+  gate 62%
+end
+
+midi out out
+end
+
+metro -> engine1.trigger
+metro -> form.trigger
+metro -> scenes.trigger
+form -> engine1.phrase
+scenes.section -> engine1.section
+engine1 -> notes1
+notes1 -> out
+end

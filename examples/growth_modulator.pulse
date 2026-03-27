@@ -1,0 +1,55 @@
+patch growth_modulator
+
+clock metro
+  every 1/16
+end
+
+progression plan
+  targets tonic dominant tonic subdominant tonic
+  lengths 2 2 2 2 4
+end
+
+growth crystal
+  root C3
+  family perfect weight 1.3 ratios 3/2 4/3
+  family color weight 0.9 ratios 5/4 7/4 9/8
+  register mid
+  target tonic
+  add when stable
+  prune when unstable
+  prune strength 2
+  fold octaves just
+  density drives rate
+  max notes 8
+end
+
+modulator mod1
+  channels 2
+  mode loop
+  overlap on
+  stage 1 channel 1 level 0.18 time 90ms overlap 16ms curve linear
+  stage 2 channel 1 level 0.92 time 130ms overlap 22ms curve smooth
+  stage 3 channel 1 level 0.36 time 190ms overlap 28ms curve exp
+  stage 1 channel 2 level 0.08 time 110ms overlap 18ms curve linear
+  stage 2 channel 2 level 0.62 time 170ms overlap 28ms curve smooth
+  stage 3 channel 2 level 0.14 time 240ms overlap 34ms curve log
+end
+
+notes notes1
+  scale C lydian
+  range C2..C5
+end
+
+midi out out
+end
+
+metro -> crystal.trigger
+metro -> plan.trigger
+metro -> mod1.trigger
+plan -> crystal.phrase
+crystal -> notes1
+crystal.density -> notes1.gate
+mod1.ch1 -> notes1.velocity
+mod1.ch2 -> notes1.time
+notes1 -> out
+end

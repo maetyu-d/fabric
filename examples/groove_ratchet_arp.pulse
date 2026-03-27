@@ -1,0 +1,29 @@
+patch groove_ratchet_arp
+
+midi in keys
+  channel 1
+end
+
+clock metro
+  every 1/16
+  swing 60%
+  ratchet 3
+  groove 100 92 108 96
+end
+
+quantize in_key
+  scale D dorian
+end
+
+arp arp1
+  gate 62%
+end
+
+midi out out
+end
+
+keys -> in_key
+in_key -> arp1
+metro -> arp1.trigger
+arp1 -> out
+end

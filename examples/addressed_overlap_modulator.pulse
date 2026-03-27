@@ -1,0 +1,50 @@
+patch addressed_overlap_modulator
+
+clock metro
+  every 1/16
+  swing 58%
+end
+
+clock accents
+  every 1/8
+end
+
+clock resets
+  every 1/2
+end
+
+pattern seq1
+  notes C3 D3 F3 A3
+  order up_down
+end
+
+modulator mod1
+  channels 2
+  mode loop
+  overlap on
+  stage 1 channel 1 level 0.18 time 60ms overlap 18ms curve linear
+  stage 2 channel 1 level 0.95 time 100ms overlap 28ms curve smooth
+  stage 3 channel 1 level 0.40 time 170ms overlap 36ms curve exp
+  stage 1 channel 2 level 0.12 time 110ms overlap 20ms curve linear
+  stage 2 channel 2 level 0.72 time 140ms overlap 34ms curve smooth
+  stage 3 channel 2 level 0.25 time 210ms overlap 48ms curve log
+end
+
+notes notes1
+  scale D dorian
+  range C2..C5
+end
+
+midi out out
+end
+
+metro -> seq1.trigger
+seq1 -> notes1
+metro -> mod1.ch1_trigger
+accents -> mod1.ch1_s2_trigger
+accents -> mod1.ch2_s3_trigger
+resets -> mod1.ch1_s2_reset
+mod1.ch1 -> notes1.velocity
+mod1.ch2 -> notes1.time
+notes1 -> out
+end

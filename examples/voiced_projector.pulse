@@ -1,19 +1,19 @@
 patch voiced_projector
 
-generate clock metro
+clock metro
   every 1/16
 end
 
-generate pattern roots
+pattern roots
   notes C3 D3 E3 G3 A3
 end
 
-shape lists lengths
+lists lengths
   time 420ms
   gate 95%
 end
 
-project to_notes voicer
+notes voicer
   mode poly
   voices 6
   steal shortest_remaining
@@ -27,12 +27,12 @@ project to_notes voicer
   velocity 102
 end
 
-output midi out
+midi out out
 end
 
-connect metro -> roots.trigger
-connect roots -> voicer
-connect lengths.time -> voicer.time
-connect lengths.gate -> voicer.gate
-connect voicer -> out
+metro -> roots.trigger
+roots -> voicer
+lengths.time -> voicer.time
+lengths.gate -> voicer.gate
+voicer -> out
 end

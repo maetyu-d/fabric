@@ -1,19 +1,19 @@
 patch midi_loop
 
-input midi keys
+midi in keys
   channel 1
 end
 
-transform loop phrase1
+loop phrase1
   capture 1/16
   playback on
   overdub off
   quantize to 1/32
 end
 
-output midi out
+midi out out
 end
 
-connect keys -> phrase1
-connect phrase1 -> out
+keys -> phrase1
+phrase1 -> out
 end

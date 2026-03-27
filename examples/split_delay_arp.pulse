@@ -3,37 +3,37 @@ patch split_delay_arp
 tempo 120
 scale D minor
 
-input midi keys
+midi in keys
   channel 1
 end
 
-generate clock metro
+clock metro
   every 1/16
 end
 
-transform split bands
+split bands
   by note
   low below C3
   mid C3..B4
   high above B4
 end
 
-transform delay low_late
+delay low_late
   time 40ms
 end
 
-transform arp arp1
+arp arp1
   gate 70%
 end
 
-output midi out
+midi out out
 end
 
-connect keys -> bands
-connect bands.low -> low_late
-connect bands.mid -> arp1
-connect metro -> arp1.trigger
-connect low_late -> out
-connect arp1 -> out
-connect bands.high -> out
+keys -> bands
+bands.low -> low_late
+bands.mid -> arp1
+metro -> arp1.trigger
+low_late -> out
+arp1 -> out
+bands.high -> out
 end

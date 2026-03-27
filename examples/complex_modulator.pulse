@@ -1,0 +1,45 @@
+patch complex_modulator
+
+clock metro
+  every 1/16
+  swing 57%
+  groove 100 94 108 98
+end
+
+pattern seq1
+  notes C3 D3 F3 A3
+  order up_down
+end
+
+modulator mod1
+  channels 4
+  mode loop
+  stage 1 channel 1 level 0.15 time 70ms curve linear
+  stage 2 channel 1 level 0.90 time 110ms curve smooth
+  stage 3 channel 1 level 0.35 time 160ms curve exp
+  stage 1 channel 2 level 0.08 time 120ms curve linear
+  stage 2 channel 2 level 0.70 time 180ms curve smooth
+  stage 3 channel 2 level 0.24 time 260ms curve log
+  stage 1 channel 3 level 0.30 time 40ms curve linear
+  stage 2 channel 3 level 1.00 time 90ms curve exp
+  stage 3 channel 3 level 0.12 time 220ms curve smooth
+  stage 1 channel 4 level 0.55 time 150ms curve linear
+  stage 2 channel 4 level 0.20 time 200ms curve smooth
+  stage 3 channel 4 level 0.82 time 280ms curve exp
+end
+
+notes notes1
+  scale D dorian
+  range C2..C5
+end
+
+midi out out
+end
+
+metro -> seq1.trigger
+seq1 -> notes1
+mod1.ch1 -> notes1.velocity
+mod1.ch2 -> notes1.time
+metro -> mod1.trigger
+notes1 -> out
+end

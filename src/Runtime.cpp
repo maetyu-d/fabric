@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <numeric>
 #include <sstream>
 #include <string_view>
 #include <tuple>
@@ -53,6 +54,32 @@ double parseTimeToken(const std::string& token, double bpm)
 int clampMidiNote(int note)
 {
     return std::clamp(note, 0, 127);
+}
+
+int clampMidiData(int value)
+{
+    return std::clamp(value, 0, 127);
+}
+
+int clampMidiChannel(int value)
+{
+    return std::clamp(value, 1, 16);
+}
+
+int parseBitValue(std::string_view token)
+{
+    if (token.empty()) return 0;
+
+    if (token.ends_with("b") || token.ends_with("B")) {
+        int value = 0;
+        for (const auto ch : token.substr(0, token.size() - 1)) {
+            if (ch != '0' && ch != '1') continue;
+            value = (value << 1) | (ch - '0');
+        }
+        return value;
+    }
+
+    return std::stoi(std::string(token), nullptr, 0);
 }
 
 int parseNoteName(std::string_view token)
@@ -164,6 +191,7 @@ int quantizeToScale(int note, const std::vector<int>& scale)
 struct Stage {
     double level = 0.0;
     double durationSeconds = 0.25;
+    double overlapSeconds = 0.0;
     std::string curve = "linear";
 };
 
@@ -175,6 +203,19 @@ std::vector<int> parsePitchList(const std::vector<std::string>& values)
         result.push_back(parseNoteName(value));
     }
     return result;
+}
+
+std::vector<double> parseGroovePattern(const std::vector<std::string>& values)
+{
+    std::vector<double> pattern;
+    for (const auto& value : values) {
+        double parsed = std::stod(value);
+        if (parsed > 4.0) {
+            parsed /= 100.0;
+        }
+        pattern.push_back(std::max(0.05, parsed));
+    }
+    return pattern;
 }
 
 class InputMidiNode final : public RuntimeNode {
@@ -328,12 +369,29 @@ public:
         if (const auto every = findPropertyValue(module, "every")) {
             everyToken_ = *every;
         }
+        if (const auto swing = findPropertyValue(module, "swing")) {
+            auto text = *swing;
+            if (!text.empty() && text.back() == '%') {
+                text.pop_back();
+                swing_ = std::clamp(std::stod(text) / 100.0, 0.5, 0.8);
+            } else {
+                swing_ = std::clamp(std::stod(text), 0.5, 0.8);
+            }
+        }
+        if (const auto ratchet = findPropertyValue(module, "ratchet")) {
+            ratchet_ = std::clamp(std::stoi(*ratchet), 1, 8);
+        }
+        groovePattern_ = parseGroovePattern(findPropertyValues(module, "groove"));
     }
 
     void reset(double sampleRate) override
     {
         sampleRate_ = sampleRate;
         elapsedSeconds_ = 0.0;
+        nextTriggerSeconds_ = 0.0;
+        nextTriggerBeats_ = 0.0;
+        stepIndex_ = 0;
+        syncArmed_ = false;
     }
 
     void process(const ProcessContext& context,
@@ -348,23 +406,25 @@ public:
 
         if (context.syncToTransport) {
             if (!context.transportPlaying || context.bpm <= 0.0) {
+                syncArmed_ = false;
                 return;
             }
 
             const auto beatLengthSeconds = 60.0 / context.bpm;
-            const auto intervalBeats = std::max(1.0e-6, interval / beatLengthSeconds);
             const auto blockBeats = blockDuration / beatLengthSeconds;
             const auto startBeat = context.transportPpq;
             const auto endBeat = startBeat + blockBeats;
-            auto nextBeat = std::ceil((startBeat - 1.0e-9) / intervalBeats) * intervalBeats;
-            if (nextBeat < startBeat - 1.0e-9) {
-                nextBeat += intervalBeats;
+            if (!syncArmed_ || startBeat + 1.0e-9 < nextTriggerBeats_) {
+                nextTriggerBeats_ = startBeat;
+                stepIndex_ = 0;
+                syncArmed_ = true;
             }
 
-            while (nextBeat <= endBeat + 1.0e-9) {
-                const auto eventTime = (nextBeat - startBeat) * beatLengthSeconds;
-                out->second->push(Event::makeTrigger(std::max(0.0, eventTime)));
-                nextBeat += intervalBeats;
+            while (nextTriggerBeats_ <= endBeat + 1.0e-9) {
+                const auto stepDurationBeats = stepDurationSeconds(interval, context.bpm) / beatLengthSeconds;
+                emitRatchets(*out->second, nextTriggerBeats_, startBeat, beatLengthSeconds, stepDurationBeats);
+                nextTriggerBeats_ += stepDurationBeats;
+                ++stepIndex_;
             }
             return;
         }
@@ -372,25 +432,71 @@ public:
         const auto start = elapsedSeconds_;
         const auto end = elapsedSeconds_ + blockDuration;
 
-        double nextTrigger = nextTriggerSeconds_;
-        if (nextTrigger < start) {
-            nextTrigger = start;
+        if (nextTriggerSeconds_ < start) {
+            nextTriggerSeconds_ = start;
         }
 
-        while (nextTrigger <= end + 1.0e-9) {
-            out->second->push(Event::makeTrigger(nextTrigger - start));
-            nextTrigger += interval;
+        while (nextTriggerSeconds_ <= end + 1.0e-9) {
+            const auto stepDuration = stepDurationSeconds(interval, context.bpm);
+            emitRatchets(*out->second, nextTriggerSeconds_, start, 1.0, stepDuration);
+            nextTriggerSeconds_ += stepDuration;
+            ++stepIndex_;
         }
 
-        nextTriggerSeconds_ = nextTrigger;
         elapsedSeconds_ = end;
     }
 
 private:
+    [[nodiscard]] double grooveMultiplier() const
+    {
+        if (groovePattern_.empty()) {
+            return 1.0;
+        }
+
+        const auto index = stepIndex_ % groovePattern_.size();
+        const auto average = std::accumulate(groovePattern_.begin(), groovePattern_.end(), 0.0) / static_cast<double>(groovePattern_.size());
+        if (average <= 1.0e-6) {
+            return 1.0;
+        }
+        return groovePattern_[index] / average;
+    }
+
+    [[nodiscard]] double swingMultiplier() const
+    {
+        if (!swing_.has_value()) {
+            return 1.0;
+        }
+        return (stepIndex_ % 2 == 0) ? (2.0 * *swing_) : (2.0 * (1.0 - *swing_));
+    }
+
+    [[nodiscard]] double stepDurationSeconds(double baseInterval, double bpm) const
+    {
+        (void)bpm;
+        return std::max(1.0e-6, baseInterval * swingMultiplier() * grooveMultiplier());
+    }
+
+    void emitRatchets(EventBuffer& out, double stepStart, double blockStart, double unitSeconds, double stepDuration) const
+    {
+        const auto spacing = stepDuration / static_cast<double>(ratchet_);
+        for (int index = 0; index < ratchet_; ++index) {
+            const auto absoluteTime = stepStart + (spacing * static_cast<double>(index));
+            const auto relative = (absoluteTime - blockStart) * unitSeconds;
+            if (relative >= -1.0e-9) {
+                out.push(Event::makeTrigger(std::max(0.0, relative)));
+            }
+        }
+    }
+
     double sampleRate_ = 44100.0;
     std::string everyToken_ = "1/8";
     double elapsedSeconds_ = 0.0;
     double nextTriggerSeconds_ = 0.0;
+    double nextTriggerBeats_ = 0.0;
+    std::size_t stepIndex_ = 0;
+    bool syncArmed_ = false;
+    int ratchet_ = 1;
+    std::optional<double> swing_;
+    std::vector<double> groovePattern_;
 };
 
 class PatternNode final : public RuntimeNode {
@@ -2635,14 +2741,15 @@ public:
                 const auto& value = property.values[i + 1];
                 if (key == "level") stage.level = std::stod(value);
                 if (key == "time") stage.durationSeconds = parseTimeToken(value, 120.0);
+                if (key == "overlap") stage.overlapSeconds = std::max(0.0, parseTimeToken(value, 120.0));
                 if (key == "curve") stage.curve = value;
             }
             stages_.push_back(stage);
         }
 
         if (stages_.empty()) {
-            stages_.push_back({ 0.0, 0.25, "linear" });
-            stages_.push_back({ 1.0, 0.25, "linear" });
+            stages_.push_back(Stage { 0.0, 0.25, 0.0, "linear" });
+            stages_.push_back(Stage { 1.0, 0.25, 0.0, "linear" });
         }
     }
 
@@ -2715,6 +2822,454 @@ private:
     double currentLevel_ = 0.0;
     bool active_ = false;
     bool freeRunning_ = false;
+};
+
+class ModulatorNode final : public RuntimeNode {
+public:
+    explicit ModulatorNode(const Module& module)
+    {
+        if (const auto channels = findPropertyValue(module, "channels")) {
+            channelCount_ = std::clamp(std::stoi(*channels), 1, 4);
+        }
+        if (const auto mode = findPropertyValue(module, "mode")) {
+            mode_ = *mode;
+        }
+        if (const auto overlap = findPropertyValue(module, "overlap")) {
+            overlapEnabled_ = (*overlap == "on");
+        }
+
+        freeRunning_ = (mode_ == "loop" || mode_ == "lfo" || mode_ == "sequence");
+        baseChannelStages_.assign(static_cast<std::size_t>(channelCount_), {});
+        channelStates_.assign(static_cast<std::size_t>(channelCount_), {});
+
+        for (const auto& property : module.properties) {
+            if (property.key != "stage" || property.values.size() < 2) continue;
+
+            std::optional<int> channel;
+            Stage stage;
+            std::size_t startIndex = 0;
+            if (!property.values.empty() && std::all_of(property.values.front().begin(), property.values.front().end(), [](unsigned char c) {
+                    return std::isdigit(c) != 0;
+                })) {
+                startIndex = 1;
+            }
+
+            for (std::size_t i = startIndex; i + 1 < property.values.size(); i += 2) {
+                const auto& key = property.values[i];
+                const auto& value = property.values[i + 1];
+                if (key == "channel") channel = std::clamp(std::stoi(value), 1, 4);
+                if (key == "level") stage.level = std::stod(value);
+                if (key == "time") stage.durationSeconds = parseTimeToken(value, 120.0);
+                if (key == "overlap") stage.overlapSeconds = std::max(0.0, parseTimeToken(value, 120.0));
+                if (key == "curve") stage.curve = value;
+            }
+
+            if (channel.has_value()) {
+                ensureChannel(*channel);
+                baseChannelStages_[static_cast<std::size_t>(*channel - 1)].push_back(stage);
+            } else {
+                for (int index = 0; index < channelCount_; ++index) {
+                    baseChannelStages_[static_cast<std::size_t>(index)].push_back(stage);
+                }
+            }
+        }
+
+        for (auto& stages : baseChannelStages_) {
+            if (stages.empty()) {
+                stages.push_back(Stage { 0.0, 0.25, 0.0, "linear" });
+                stages.push_back(Stage { 1.0, 0.25, 0.0, "smooth" });
+                stages.push_back(Stage { 0.0, 0.25, 0.0, "exp" });
+            }
+        }
+    }
+
+    void reset(double sampleRate) override
+    {
+        sampleRate_ = sampleRate;
+        for (auto& state : channelStates_) {
+            state.selectedStage = 0;
+            state.sequenceStageIndex = 0;
+            state.sequenceElapsed = 0.0;
+            state.sequenceBaseLevel = 0.0;
+            state.sequenceLevel = 0.0;
+            state.currentLevel = 0.0;
+            state.sequenceActive = freeRunning_;
+            state.manualStages.clear();
+        }
+    }
+
+    [[nodiscard]] std::optional<std::string> activeStateLabel() const override
+    {
+        return std::to_string(channelCount_) + "ch " + mode_ + (overlapEnabled_ ? " overlap" : "");
+    }
+
+    [[nodiscard]] std::optional<ModulatorStateSnapshot> modulatorState() const override
+    {
+        ModulatorStateSnapshot snapshot;
+        snapshot.channelCount = channelCount_;
+        snapshot.mode = mode_;
+        snapshot.overlapEnabled = overlapEnabled_;
+        snapshot.channels.reserve(channelStates_.size());
+
+        for (std::size_t channelIndex = 0; channelIndex < channelStates_.size(); ++channelIndex) {
+            const auto& state = channelStates_[channelIndex];
+            ModulatorChannelStateSnapshot channelSnapshot;
+            channelSnapshot.level = state.currentLevel;
+            channelSnapshot.activeStages = currentActiveStages(state);
+            snapshot.channels.push_back(std::move(channelSnapshot));
+        }
+
+        return snapshot;
+    }
+
+    void process(const ProcessContext& context,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto rateScale = rateAtInput(inputs);
+        const auto blockDuration = static_cast<double>(context.blockSize) / context.sampleRate * rateScale;
+
+        for (int channel = 0; channel < channelCount_; ++channel) {
+            auto& state = channelStates_[static_cast<std::size_t>(channel)];
+            const auto channelNumber = channel + 1;
+            auto stages = modulatedStages(inputs, channelNumber);
+            std::vector<std::size_t> endedStages;
+            handleSelections(inputs, state, channelNumber, stages.size());
+            handleResets(inputs, state, channelNumber);
+            handleGlobalTriggers(inputs, state, channelNumber, stages);
+            handleStageTriggers(inputs, state, channelNumber, stages);
+            advanceSequence(state, stages, blockDuration, endedStages);
+            advanceManualStages(state, stages, blockDuration, endedStages);
+            state.currentLevel = state.sequenceLevel + sumManualLevels(state);
+
+            const auto valueEvent = Event::makeValue(state.currentLevel, 0.0);
+            const auto portName = "ch" + std::to_string(channelNumber);
+            if (const auto out = outputs.find(portName); out != outputs.end()) {
+                out->second->push(valueEvent);
+            }
+            if (channel == 0) {
+                if (const auto out = outputs.find("out"); out != outputs.end()) {
+                    out->second->push(valueEvent);
+                }
+            }
+
+            emitStageOutputs(outputs, channelNumber, state, endedStages);
+        }
+    }
+
+private:
+    struct ManualStage {
+        std::size_t stageIndex = 0;
+        double elapsed = 0.0;
+        double startLevel = 0.0;
+        double currentLevel = 0.0;
+    };
+
+    struct ChannelState {
+        std::size_t selectedStage = 0;
+        std::size_t sequenceStageIndex = 0;
+        double sequenceElapsed = 0.0;
+        double sequenceBaseLevel = 0.0;
+        double sequenceLevel = 0.0;
+        double currentLevel = 0.0;
+        bool sequenceActive = false;
+        std::vector<ManualStage> manualStages;
+    };
+
+    void ensureChannel(int channel)
+    {
+        channelCount_ = std::max(channelCount_, channel);
+        baseChannelStages_.resize(static_cast<std::size_t>(channelCount_));
+        channelStates_.resize(static_cast<std::size_t>(channelCount_));
+    }
+
+    [[nodiscard]] std::vector<Stage> modulatedStages(const std::unordered_map<std::string, const EventBuffer*>& inputs, int channel) const
+    {
+        auto stages = baseChannelStages_[static_cast<std::size_t>(channel - 1)];
+        for (std::size_t stageIndex = 0; stageIndex < stages.size(); ++stageIndex) {
+            const auto stageNumber = static_cast<int>(stageIndex) + 1;
+            const auto prefix = "ch" + std::to_string(channel) + "_s" + std::to_string(stageNumber) + "_";
+            if (const auto level = inputValue(inputs, prefix + "level"); level.has_value()) {
+                stages[stageIndex].level = *level;
+            }
+            if (const auto time = inputValue(inputs, prefix + "time"); time.has_value()) {
+                stages[stageIndex].durationSeconds = std::clamp(*time, 0.001, 600.0);
+            }
+            if (const auto curve = inputValue(inputs, prefix + "curve"); curve.has_value()) {
+                stages[stageIndex].curve = curveName(*curve);
+            }
+        }
+        return stages;
+    }
+
+    void handleSelections(const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        ChannelState& state,
+        int channel,
+        std::size_t stageCount) const
+    {
+        if (stageCount == 0) return;
+        const auto port = "ch" + std::to_string(channel) + "_select";
+        if (const auto selected = inputValue(inputs, port); selected.has_value()) {
+            const auto index = std::clamp(static_cast<int>(std::lround(*selected)) - 1, 0, static_cast<int>(stageCount) - 1);
+            state.selectedStage = static_cast<std::size_t>(index);
+        }
+    }
+
+    void handleResets(const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        ChannelState& state,
+        int channel)
+    {
+        const auto resetPort = "ch" + std::to_string(channel) + "_reset";
+        if (hasTrigger(inputs, resetPort)) {
+            resetChannel(state);
+        }
+
+        for (int stage = 1; stage <= 13; ++stage) {
+            const auto port = "ch" + std::to_string(channel) + "_s" + std::to_string(stage) + "_reset";
+            if (hasTrigger(inputs, port)) {
+                removeManualStage(state, static_cast<std::size_t>(stage - 1));
+            }
+        }
+    }
+
+    void handleGlobalTriggers(const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        ChannelState& state,
+        int channel,
+        const std::vector<Stage>& stages)
+    {
+        if (stages.empty()) return;
+        if (hasTrigger(inputs, "trigger") || hasTrigger(inputs, "ch" + std::to_string(channel) + "_trigger")) {
+            startSequence(state, state.selectedStage, stages);
+        }
+    }
+
+    void handleStageTriggers(const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        ChannelState& state,
+        int channel,
+        const std::vector<Stage>& stages)
+    {
+        for (int stage = 1; stage <= std::min<int>(13, static_cast<int>(stages.size())); ++stage) {
+            const auto port = "ch" + std::to_string(channel) + "_s" + std::to_string(stage) + "_trigger";
+            if (hasTrigger(inputs, port)) {
+                startManualStage(state, static_cast<std::size_t>(stage - 1), stages);
+            }
+        }
+    }
+
+    [[nodiscard]] double rateAtInput(const std::unordered_map<std::string, const EventBuffer*>& inputs) const
+    {
+        if (const auto rate = inputs.find("rate"); rate != inputs.end() && !rate->second->events().empty()) {
+            return std::clamp(rate->second->events().back().valueOr(1.0), 0.125, 8.0);
+        }
+        return 1.0;
+    }
+
+    [[nodiscard]] static std::optional<double> inputValue(const std::unordered_map<std::string, const EventBuffer*>& inputs, const std::string& port)
+    {
+        if (const auto found = inputs.find(port); found != inputs.end() && !found->second->events().empty()) {
+            return found->second->events().back().valueOr(0.0);
+        }
+        return std::nullopt;
+    }
+
+    [[nodiscard]] static bool hasTrigger(const std::unordered_map<std::string, const EventBuffer*>& inputs, const std::string& port)
+    {
+        if (const auto found = inputs.find(port); found != inputs.end()) {
+            return !found->second->events().empty();
+        }
+        return false;
+    }
+
+    [[nodiscard]] static std::string curveName(double value)
+    {
+        const auto normalized = std::clamp(value, 0.0, 1.0);
+        if (normalized < 0.25) return "linear";
+        if (normalized < 0.5) return "smooth";
+        if (normalized < 0.75) return "exp";
+        return "log";
+    }
+
+    void resetChannel(ChannelState& state) const
+    {
+        state.sequenceActive = freeRunning_;
+        state.sequenceStageIndex = state.selectedStage;
+        state.sequenceElapsed = 0.0;
+        state.sequenceBaseLevel = 0.0;
+        state.sequenceLevel = 0.0;
+        state.currentLevel = 0.0;
+        state.manualStages.clear();
+    }
+
+    void startSequence(ChannelState& state, std::size_t stageIndex, const std::vector<Stage>& stages) const
+    {
+        if (stages.empty()) return;
+        if (!overlapEnabled_) {
+            state.manualStages.clear();
+        }
+        state.selectedStage = std::min(stageIndex, stages.size() - 1);
+        state.sequenceStageIndex = state.selectedStage;
+        state.sequenceElapsed = 0.0;
+        state.sequenceBaseLevel = overlapEnabled_ ? state.currentLevel : 0.0;
+        state.sequenceLevel = state.sequenceBaseLevel;
+        state.sequenceActive = true;
+    }
+
+    void startManualStage(ChannelState& state, std::size_t stageIndex, const std::vector<Stage>& stages) const
+    {
+        if (stageIndex >= stages.size()) return;
+        if (!overlapEnabled_) {
+            state.manualStages.clear();
+        }
+        state.manualStages.push_back({ stageIndex, 0.0, state.currentLevel, state.currentLevel });
+    }
+
+    void removeManualStage(ChannelState& state, std::size_t stageIndex) const
+    {
+        state.manualStages.erase(std::remove_if(state.manualStages.begin(), state.manualStages.end(), [stageIndex](const ManualStage& active) {
+            return active.stageIndex == stageIndex;
+        }), state.manualStages.end());
+    }
+
+    void advanceSequence(ChannelState& state, const std::vector<Stage>& stages, double deltaSeconds, std::vector<std::size_t>& endedStages)
+    {
+        if (!state.sequenceActive || stages.empty()) return;
+
+        double remaining = deltaSeconds;
+        while (remaining > 0.0 && state.sequenceActive) {
+            const auto& stage = stages[state.sequenceStageIndex];
+            const auto duration = std::max(stage.durationSeconds, 1.0e-6);
+            const auto overlapPoint = overlapEnabled_ && state.sequenceStageIndex + 1 < stages.size()
+                ? std::clamp(duration - std::min(stage.overlapSeconds, duration - 1.0e-6), 0.0, duration)
+                : duration;
+            const auto nextBoundary = (overlapEnabled_ && stage.overlapSeconds > 1.0e-6 && state.sequenceStageIndex + 1 < stages.size() && state.sequenceElapsed < overlapPoint - 1.0e-9)
+                ? overlapPoint
+                : duration;
+            const auto before = state.sequenceElapsed;
+            const auto consume = std::min(remaining, nextBoundary - state.sequenceElapsed);
+            state.sequenceElapsed += consume;
+            remaining -= consume;
+
+            const auto t = applyCurve(stage.curve, state.sequenceElapsed / duration);
+            state.sequenceLevel = state.sequenceBaseLevel + (stage.level - state.sequenceBaseLevel) * t;
+
+            if (nextBoundary == overlapPoint && before < overlapPoint && state.sequenceElapsed >= overlapPoint - 1.0e-9) {
+                state.manualStages.push_back({ state.sequenceStageIndex, state.sequenceElapsed, state.sequenceBaseLevel, state.sequenceLevel });
+                state.sequenceBaseLevel = state.sequenceLevel;
+                state.sequenceElapsed = 0.0;
+                ++state.sequenceStageIndex;
+                if (state.sequenceStageIndex >= stages.size()) {
+                    if (freeRunning_) {
+                        state.sequenceStageIndex = 0;
+                    } else {
+                        state.sequenceStageIndex = stages.size() - 1;
+                        state.sequenceActive = false;
+                    }
+                }
+                continue;
+            }
+
+            if (before < duration && state.sequenceElapsed >= duration - 1.0e-9) {
+                endedStages.push_back(state.sequenceStageIndex);
+                state.sequenceBaseLevel = stage.level;
+                state.sequenceElapsed = 0.0;
+                ++state.sequenceStageIndex;
+                if (state.sequenceStageIndex >= stages.size()) {
+                    if (freeRunning_) {
+                        state.sequenceStageIndex = 0;
+                    } else {
+                        state.sequenceStageIndex = stages.size() - 1;
+                        state.sequenceActive = false;
+                    }
+                }
+            }
+        }
+    }
+
+    void advanceManualStages(ChannelState& state, const std::vector<Stage>& stages, double deltaSeconds, std::vector<std::size_t>& endedStages) const
+    {
+        for (auto& active : state.manualStages) {
+            const auto& stage = stages[active.stageIndex];
+            const auto duration = std::max(stage.durationSeconds, 1.0e-6);
+            active.elapsed = std::min(duration, active.elapsed + deltaSeconds);
+            const auto t = applyCurve(stage.curve, active.elapsed / duration);
+            active.currentLevel = active.startLevel + (stage.level - active.startLevel) * t;
+        }
+
+        state.manualStages.erase(std::remove_if(state.manualStages.begin(), state.manualStages.end(), [&stages, &endedStages](const ManualStage& active) {
+            const auto duration = std::max(stages[active.stageIndex].durationSeconds, 1.0e-6);
+            const auto finished = active.elapsed >= duration - 1.0e-9;
+            if (finished) {
+                endedStages.push_back(active.stageIndex);
+            }
+            return finished;
+        }), state.manualStages.end());
+    }
+
+    void emitStageOutputs(std::unordered_map<std::string, EventBuffer*>& outputs,
+        int channel,
+        const ChannelState& state,
+        const std::vector<std::size_t>& endedStages) const
+    {
+        std::array<bool, 13> active {};
+        if (state.sequenceActive && state.sequenceStageIndex < active.size()) {
+            active[state.sequenceStageIndex] = true;
+        }
+        for (const auto& manual : state.manualStages) {
+            if (manual.stageIndex < active.size()) {
+                active[manual.stageIndex] = true;
+            }
+        }
+
+        std::array<bool, 13> ended {};
+        for (const auto stageIndex : endedStages) {
+            if (stageIndex < ended.size()) {
+                ended[stageIndex] = true;
+            }
+        }
+
+        for (int stage = 1; stage <= 13; ++stage) {
+            const auto prefix = "ch" + std::to_string(channel) + "_s" + std::to_string(stage) + "_";
+            if (const auto gateOut = outputs.find(prefix + "gate"); gateOut != outputs.end()) {
+                gateOut->second->push(Event { SignalType::gate, 0.0, {}, { active[static_cast<std::size_t>(stage - 1)] ? 1.0 : 0.0 } });
+            }
+            if (ended[static_cast<std::size_t>(stage - 1)]) {
+                if (const auto endOut = outputs.find(prefix + "end"); endOut != outputs.end()) {
+                    endOut->second->push(Event::makeTrigger(0.0));
+                }
+            }
+        }
+    }
+
+    [[nodiscard]] static std::vector<int> currentActiveStages(const ChannelState& state)
+    {
+        std::vector<int> stages;
+        if (state.sequenceActive) {
+            stages.push_back(static_cast<int>(state.sequenceStageIndex) + 1);
+        }
+        for (const auto& manual : state.manualStages) {
+            stages.push_back(static_cast<int>(manual.stageIndex) + 1);
+        }
+        std::sort(stages.begin(), stages.end());
+        stages.erase(std::unique(stages.begin(), stages.end()), stages.end());
+        return stages;
+    }
+
+    [[nodiscard]] static double sumManualLevels(const ChannelState& state)
+    {
+        double total = 0.0;
+        for (const auto& active : state.manualStages) {
+            total += active.currentLevel;
+        }
+        return total;
+    }
+
+    double sampleRate_ = 44100.0;
+    int channelCount_ = 1;
+    std::string mode_ = "loop";
+    bool freeRunning_ = true;
+    bool overlapEnabled_ = false;
+    std::vector<std::vector<Stage>> baseChannelStages_;
+    std::vector<ChannelState> channelStates_;
 };
 
 class QuantizeNode final : public RuntimeNode {
@@ -2930,6 +3485,355 @@ private:
     int nextWormholeAt_ = std::numeric_limits<int>::max();
     std::uint32_t seed_ = 97;
     std::uint32_t state_ = 97;
+};
+
+class BitsNode final : public RuntimeNode {
+public:
+    explicit BitsNode(const Module& module)
+    {
+        if (const auto target = findPropertyValue(module, "target")) {
+            target_ = *target;
+        } else if (const auto on = findPropertyValue(module, "on")) {
+            target_ = *on;
+        }
+        if (const auto channel = findPropertyValue(module, "channel")) {
+            inputChannel_ = clampMidiChannel(std::stoi(*channel));
+        }
+
+        for (const auto& property : module.properties) {
+            if (property.key == "events" && !property.values.empty()) {
+                eventScope_ = property.values.front();
+            } else if (property.key == "only" && !property.values.empty()) {
+                eventScope_ = property.values.front();
+            } else if (property.key == "status" && !property.values.empty()) {
+                eventScope_ = property.values.front();
+            } else if (property.key == "cc" && !property.values.empty()) {
+                parseCcSelector(property.values.front(), ccFilter_);
+            } else if (property.key == "except" && property.values.size() >= 2 && property.values.front() == "cc") {
+                parseCcSelector(property.values[1], excludedCcFilter_);
+            } else if (property.key == "except" && property.values.size() >= 2 && property.values.front() == "note") {
+                parseNoteSelector(property.values[1], excludedNoteFilter_);
+            } else if (property.key == "except" && property.values.size() >= 2 && property.values.front() == "velocity") {
+                parseDataSelector(property.values[1], excludedVelocityFilter_);
+            } else if (property.key == "note" && !property.values.empty()) {
+                parseNoteSelector(property.values.front(), noteFilter_);
+            } else if (property.key == "velocity" && !property.values.empty()) {
+                parseDataSelector(property.values.front(), velocityFilter_);
+            }
+
+            if (property.key == "and" && !property.values.empty()) {
+                operations_.push_back({ OperationKind::bitAnd, parseBitValue(property.values.front()) });
+            } else if (property.key == "or" && !property.values.empty()) {
+                operations_.push_back({ OperationKind::bitOr, parseBitValue(property.values.front()) });
+            } else if (property.key == "xor" && !property.values.empty()) {
+                operations_.push_back({ OperationKind::bitXor, parseBitValue(property.values.front()) });
+            } else if (property.key == "left" && !property.values.empty()) {
+                operations_.push_back({ OperationKind::shiftLeft, parseBitValue(property.values.front()) });
+            } else if (property.key == "right" && !property.values.empty()) {
+                operations_.push_back({ OperationKind::shiftRight, parseBitValue(property.values.front()) });
+            } else if (property.key == "not") {
+                operations_.push_back({ OperationKind::bitNot, 0 });
+            } else if (property.key == "mask" && property.values.size() >= 2 && property.values.front() == "with") {
+                operations_.push_back({ OperationKind::bitAnd, parseBitValue(property.values[1]) });
+            }
+        }
+    }
+
+    void reset(double) override {}
+
+    [[nodiscard]] std::optional<std::string> activeStateLabel() const override
+    {
+        std::vector<std::string> parts;
+        if (eventScope_ != "all") {
+            parts.push_back(eventScope_);
+        }
+        if (inputChannel_.has_value()) {
+            parts.push_back("ch" + std::to_string(*inputChannel_));
+        }
+        if (hasActiveFilter(ccFilter_)) {
+            parts.push_back("cc " + describeFilter(ccFilter_));
+        }
+        if (hasActiveFilter(excludedCcFilter_)) {
+            parts.push_back("!cc " + describeFilter(excludedCcFilter_));
+        }
+        if (hasActiveFilter(noteFilter_)) {
+            parts.push_back("note " + describeFilter(noteFilter_));
+        }
+        if (hasActiveFilter(excludedNoteFilter_)) {
+            parts.push_back("!note " + describeFilter(excludedNoteFilter_));
+        }
+        if (hasActiveFilter(velocityFilter_)) {
+            parts.push_back("vel " + describeFilter(velocityFilter_));
+        }
+        if (hasActiveFilter(excludedVelocityFilter_)) {
+            parts.push_back("!vel " + describeFilter(excludedVelocityFilter_));
+        }
+        if (parts.empty()) {
+            parts.push_back(target_);
+        }
+        if (parts.size() > 3) {
+            parts.resize(3);
+            parts.push_back("...");
+        }
+
+        std::ostringstream stream;
+        for (std::size_t index = 0; index < parts.size(); ++index) {
+            if (index > 0) stream << " ";
+            stream << parts[index];
+        }
+        return stream.str();
+    }
+
+    void process(const ProcessContext&,
+        const std::unordered_map<std::string, const EventBuffer*>& inputs,
+        std::unordered_map<std::string, EventBuffer*>& outputs) override
+    {
+        const auto out = outputs.find("out");
+        if (out == outputs.end()) return;
+
+        if (const auto input = inputs.find("in"); input != inputs.end()) {
+            for (const auto& event : input->second->events()) {
+                out->second->push(apply(event));
+            }
+        }
+    }
+
+private:
+    enum class OperationKind {
+        bitAnd,
+        bitOr,
+        bitXor,
+        bitNot,
+        shiftLeft,
+        shiftRight
+    };
+
+    struct Operation {
+        OperationKind kind = OperationKind::bitAnd;
+        int argument = 0;
+    };
+
+    struct IntFilter {
+        std::optional<int> exact;
+        std::optional<std::pair<int, int>> range;
+    };
+
+    [[nodiscard]] Event apply(const Event& event) const
+    {
+        if (event.type != SignalType::midi || operations_.empty() || !matchesScope(event)) {
+            return event;
+        }
+
+        auto transformed = event;
+        if (transformed.ints.size() < 4) {
+            return transformed;
+        }
+
+        int* field = fieldPointer(transformed);
+        if (field == nullptr) {
+            return transformed;
+        }
+
+        int value = *field;
+        for (const auto& operation : operations_) {
+            switch (operation.kind) {
+            case OperationKind::bitAnd:
+                value &= operation.argument;
+                break;
+            case OperationKind::bitOr:
+                value |= operation.argument;
+                break;
+            case OperationKind::bitXor:
+                value ^= operation.argument;
+                break;
+            case OperationKind::bitNot:
+                value = ~value;
+                break;
+            case OperationKind::shiftLeft:
+                value <<= std::max(0, operation.argument);
+                break;
+            case OperationKind::shiftRight:
+                value >>= std::max(0, operation.argument);
+                break;
+            }
+        }
+
+        *field = clampForTarget(value);
+
+        if ((target_ == "note" || target_ == "velocity") && (transformed.isNoteOn() || transformed.isNoteOff())) {
+            transformed.ints[1] = clampMidiData(transformed.ints[1]);
+            transformed.ints[2] = clampMidiData(transformed.ints[2]);
+        }
+
+        return transformed;
+    }
+
+    [[nodiscard]] int* fieldPointer(Event& event) const
+    {
+        if (target_ == "status") return &event.ints[0];
+        if (target_ == "note") {
+            if (event.isNoteOn() || event.isNoteOff()) return &event.ints[1];
+            return nullptr;
+        }
+        if (target_ == "velocity") {
+            if (event.isNoteOn() || event.isNoteOff()) return &event.ints[2];
+            return nullptr;
+        }
+        if (target_ == "channel") return &event.ints[3];
+        if (target_ == "data1") return &event.ints[1];
+        if (target_ == "data2") return &event.ints[2];
+        return &event.ints[2];
+    }
+
+    [[nodiscard]] int clampForTarget(int value) const
+    {
+        if (target_ == "status") return std::clamp(value, 0, 255);
+        if (target_ == "channel") return clampMidiChannel(value);
+        return clampMidiData(value);
+    }
+
+    [[nodiscard]] bool matchesScope(const Event& event) const
+    {
+        if (event.ints.empty()) return false;
+        if (inputChannel_.has_value()) {
+            if (event.ints.size() < 4 || event.ints[3] != *inputChannel_) {
+                return false;
+            }
+        }
+
+        const int status = event.ints[0] & 0xF0;
+        const bool isNoteEvent = event.isNoteOn() || event.isNoteOff() || status == 0x80 || status == 0x90;
+        if (hasActiveFilter(noteFilter_) || hasActiveFilter(excludedNoteFilter_) || hasActiveFilter(velocityFilter_) || hasActiveFilter(excludedVelocityFilter_)) {
+            if (!isNoteEvent || event.ints.size() < 3) {
+                return false;
+            }
+            if (!matchesIntFilter(event.ints[1], noteFilter_)) {
+                return false;
+            }
+            if (matchesIntFilter(event.ints[1], excludedNoteFilter_)) {
+                return false;
+            }
+            if (!matchesIntFilter(event.ints[2], velocityFilter_)) {
+                return false;
+            }
+            if (matchesIntFilter(event.ints[2], excludedVelocityFilter_)) {
+                return false;
+            }
+        }
+
+        if (eventScope_ == "all") return true;
+        if (eventScope_ == "note" || eventScope_ == "notes") {
+            return isNoteEvent;
+        }
+        if (eventScope_ == "note_on" || eventScope_ == "noteon") {
+            return status == 0x90 && event.ints.size() >= 3 && event.ints[2] > 0;
+        }
+        if (eventScope_ == "note_off" || eventScope_ == "noteoff") {
+            return status == 0x80 || (status == 0x90 && event.ints.size() >= 3 && event.ints[2] == 0);
+        }
+        if (eventScope_ == "cc" || eventScope_ == "controller" || eventScope_ == "controllers") {
+            if (status != 0xB0) {
+                return false;
+            }
+            if (event.ints.size() < 2) {
+                return false;
+            }
+            const int cc = event.ints[1];
+            if (!matchesIntFilter(cc, ccFilter_)) {
+                return false;
+            }
+            if (matchesIntFilter(cc, excludedCcFilter_)) {
+                return false;
+            }
+            return true;
+        }
+        if (eventScope_ == "pitch" || eventScope_ == "pitchbend") {
+            return status == 0xE0;
+        }
+        if (eventScope_ == "program" || eventScope_ == "program_change") {
+            return status == 0xC0;
+        }
+        if (eventScope_ == "channel_aftertouch" || eventScope_ == "aftertouch") {
+            return status == 0xD0;
+        }
+        if (eventScope_ == "poly_aftertouch" || eventScope_ == "poly_pressure") {
+            return status == 0xA0;
+        }
+        return true;
+    }
+
+    static void parseCcSelector(const std::string& token, IntFilter& filter)
+    {
+        parseDataSelector(token, filter);
+    }
+
+    static void parseDataSelector(const std::string& token, IntFilter& filter)
+    {
+        const auto dots = token.find("..");
+        if (dots != std::string::npos) {
+            const int low = clampMidiData(std::stoi(token.substr(0, dots)));
+            const int high = clampMidiData(std::stoi(token.substr(dots + 2)));
+            filter.range = std::pair { std::min(low, high), std::max(low, high) };
+            filter.exact.reset();
+            return;
+        }
+
+        filter.exact = clampMidiData(std::stoi(token));
+        filter.range.reset();
+    }
+
+    static void parseNoteSelector(const std::string& token, IntFilter& filter)
+    {
+        const auto dots = token.find("..");
+        if (dots != std::string::npos) {
+            const int low = clampMidiNote(parseNoteName(token.substr(0, dots)));
+            const int high = clampMidiNote(parseNoteName(token.substr(dots + 2)));
+            filter.range = std::pair { std::min(low, high), std::max(low, high) };
+            filter.exact.reset();
+            return;
+        }
+
+        filter.exact = clampMidiNote(parseNoteName(token));
+        filter.range.reset();
+    }
+
+    [[nodiscard]] static bool matchesIntFilter(int value, const IntFilter& filter)
+    {
+        if (filter.exact.has_value()) {
+            return value == *filter.exact;
+        }
+        if (filter.range.has_value()) {
+            return value >= filter.range->first && value <= filter.range->second;
+        }
+        return true;
+    }
+
+    [[nodiscard]] static bool hasActiveFilter(const IntFilter& filter)
+    {
+        return filter.exact.has_value() || filter.range.has_value();
+    }
+
+    [[nodiscard]] static std::string describeFilter(const IntFilter& filter)
+    {
+        if (filter.exact.has_value()) {
+            return std::to_string(*filter.exact);
+        }
+        if (filter.range.has_value()) {
+            return std::to_string(filter.range->first) + ".." + std::to_string(filter.range->second);
+        }
+        return "*";
+    }
+
+    std::string target_ = "velocity";
+    std::string eventScope_ = "all";
+    std::optional<int> inputChannel_;
+    IntFilter ccFilter_;
+    IntFilter excludedCcFilter_;
+    IntFilter noteFilter_;
+    IntFilter excludedNoteFilter_;
+    IntFilter velocityFilter_;
+    IntFilter excludedVelocityFilter_;
+    std::vector<Operation> operations_;
 };
 
 class ListsNode final : public RuntimeNode {
@@ -4789,6 +5693,10 @@ std::unique_ptr<RuntimeNode> makeRuntimeNode(const NodeInfo& info, const Module&
         return std::make_unique<StagesNode>(module);
     }
 
+    if (info.family == ModuleFamily::shape && info.kind == "modulator") {
+        return std::make_unique<ModulatorNode>(module);
+    }
+
     if (info.family == ModuleFamily::shape && info.kind == "lists") {
         return std::make_unique<ListsNode>(module);
     }
@@ -4799,6 +5707,10 @@ std::unique_ptr<RuntimeNode> makeRuntimeNode(const NodeInfo& info, const Module&
 
     if (info.family == ModuleFamily::transform && info.kind == "warp") {
         return std::make_unique<WarpNode>(module);
+    }
+
+    if (info.family == ModuleFamily::transform && info.kind == "bits") {
+        return std::make_unique<BitsNode>(module);
     }
 
     if (info.family == ModuleFamily::project && info.kind == "to_notes") {
@@ -4930,6 +5842,11 @@ std::optional<std::string> RuntimeNode::activeStateLabel() const
     return std::nullopt;
 }
 
+std::optional<ModulatorStateSnapshot> RuntimeNode::modulatorState() const
+{
+    return std::nullopt;
+}
+
 void EventBuffer::clear()
 {
     events_.clear();
@@ -4992,6 +5909,7 @@ RuntimeGraph::RuntimeGraph(CompiledPatch patch)
 {
     nodes_.reserve(patch_.nodes.size());
     buffers_.resize(patch_.nodes.size());
+    nodeModes_.assign(patch_.nodes.size(), NodeProcessingMode::normal);
 
     for (std::size_t i = 0; i < patch_.nodes.size(); ++i) {
         const auto& nodeInfo = patch_.nodes[i];
@@ -5049,7 +5967,21 @@ void RuntimeGraph::process(const ProcessContext& context)
             outputViews.emplace(name, &buffer);
         }
 
-        nodes_[nodeIndex]->process(context, inputViews, outputViews);
+        const auto mode = nodeModes_[nodeIndex];
+        if (mode == NodeProcessingMode::mute) {
+            // Leave outputs empty.
+        } else if (mode == NodeProcessingMode::bypass) {
+            const auto input = inputViews.find("in");
+            if (input != inputViews.end()) {
+                if (const auto out = outputViews.find("out"); out != outputViews.end()) {
+                    out->second->append(*input->second);
+                } else if (outputViews.size() == 1) {
+                    outputViews.begin()->second->append(*input->second);
+                }
+            }
+        } else {
+            nodes_[nodeIndex]->process(context, inputViews, outputViews);
+        }
 
         if (patch_.nodes[nodeIndex].family == ModuleFamily::output) {
             const auto* buffer = inputBuffer(nodeIndex, "in");
@@ -5067,6 +5999,20 @@ void RuntimeGraph::setInputEvents(const std::string& moduleName, const std::vect
     const auto node = findNodeIndex(moduleName);
     if (!node.has_value()) return;
     nodes_[*node]->setExternalEvents(events);
+}
+
+void RuntimeGraph::setNodeMode(const std::string& moduleName, NodeProcessingMode mode)
+{
+    const auto node = findNodeIndex(moduleName);
+    if (!node.has_value()) return;
+    nodeModes_[*node] = mode;
+}
+
+NodeProcessingMode RuntimeGraph::nodeMode(const std::string& moduleName) const
+{
+    const auto node = findNodeIndex(moduleName);
+    if (!node.has_value()) return NodeProcessingMode::normal;
+    return nodeModes_[*node];
 }
 
 const CompiledPatch& RuntimeGraph::patch() const
@@ -5142,6 +6088,16 @@ std::optional<std::string> RuntimeGraph::activeStateLabel(const std::string& mod
     }
 
     return nodes_[*node]->activeStateLabel();
+}
+
+std::optional<ModulatorStateSnapshot> RuntimeGraph::modulatorState(const std::string& moduleName) const
+{
+    const auto node = findNodeIndex(moduleName);
+    if (!node.has_value()) {
+        return std::nullopt;
+    }
+
+    return nodes_[*node]->modulatorState();
 }
 
 } // namespace pulse

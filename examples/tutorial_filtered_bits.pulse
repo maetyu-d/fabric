@@ -1,0 +1,19 @@
+patch tutorial_filtered_bits
+
+midi in keys
+end
+
+bits sculpt_notes
+  status notes
+  note C3..C5
+  velocity 85..127
+  target velocity
+  and 11110000b
+end
+
+midi out out
+end
+
+keys -> sculpt_notes
+sculpt_notes -> out
+end

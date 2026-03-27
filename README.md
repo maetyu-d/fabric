@@ -1,5 +1,7 @@
 # Fabric
 
+![](https://github.com/maetyu-d/fabric/blob/main/Screenshot%202026-03-27%20at%2010.40.35.png)
+
 Fabric is a small, human-readable patch language for building modular MIDI music systems inside a JUCE-based Audio Unit MIDI Effect plugin (VST3 and standalone also available but untested). It is primarily for:
 
 - generating MIDI

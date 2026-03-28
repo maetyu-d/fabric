@@ -1750,7 +1750,7 @@ void FabricAudioProcessor::setCurrentProgram(int index)
     }
 
     currentProgramIndex_ = index;
-    compileScript(presets[static_cast<std::size_t>(index)].script);
+    setPendingScriptText(presets[static_cast<std::size_t>(index)].script, true);
 }
 
 const juce::String FabricAudioProcessor::getProgramName(int index)
@@ -1810,6 +1810,18 @@ void FabricAudioProcessor::requestCompile(const juce::String& scriptText)
 
     const auto requestId = requestedCompileId_.fetch_add(1) + 1;
     compilePool_.addJob(new CompileJob(*this, scriptText, requestId), true);
+}
+
+void FabricAudioProcessor::setPendingScriptText(const juce::String& scriptText, bool notifyUi)
+{
+    {
+        const juce::ScopedLock lock(uiStateLock_);
+        scriptText_ = scriptText;
+    }
+
+    if (notifyUi) {
+        uiRevision_.fetch_add(1);
+    }
 }
 
 juce::String FabricAudioProcessor::getScriptText() const

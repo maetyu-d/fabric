@@ -27,6 +27,7 @@ public:
 
     struct NodeIoSnapshot {
         juce::String moduleName;
+        juce::String displayName;
         juce::String family;
         juce::String kind;
         std::vector<IoEventSummary> incoming;
@@ -64,6 +65,7 @@ public:
 
     struct GraphNode {
         juce::String name;
+        juce::String displayName;
         juce::String family;
         juce::String kind;
         juce::String detail;
@@ -137,6 +139,7 @@ public:
 
     bool compileScript(const juce::String& scriptText);
     void requestCompile(const juce::String& scriptText);
+    void setPendingScriptText(const juce::String& scriptText, bool notifyUi = false);
 
     juce::String getScriptText() const;
     juce::String getDiagnosticsText() const;

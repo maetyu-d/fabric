@@ -2,7 +2,6 @@
 
 namespace {
 
-constexpr int kDebounceMs = 350;
 const auto kBg = juce::Colour::fromRGB(242, 236, 226);
 const auto kPanel = juce::Colour::fromRGB(233, 226, 214);
 const auto kPanelStrong = juce::Colour::fromRGB(222, 214, 202);
@@ -66,6 +65,8 @@ std::optional<DisplayModule> inferDisplayModule(const juce::StringArray& tokens)
         if (head == "motion") return DisplayModule { "analyze", "motion", name };
 
         if (head == "clock" || head == "pattern" || head == "fibonacci" || head == "random"
+            || head == "chance" || head == "field" || head == "formula" || head == "moment"
+            || head == "table" || head == "markov" || head == "tree"
             || head == "phrase" || head == "progression" || head == "growth" || head == "swarm"
             || head == "collapse" || head == "section") {
             return DisplayModule { "generate", head, name };
@@ -75,9 +76,9 @@ std::optional<DisplayModule> inferDisplayModule(const juce::StringArray& tokens)
             return DisplayModule { "shape", head, name };
         }
 
-        if (head == "quantize" || head == "split" || head == "delay" || head == "loop"
+        if (head == "quantize" || head == "sieve" || head == "split" || head == "delay" || head == "loop"
             || head == "bounce" || head == "arp" || head == "warp" || head == "filter"
-            || head == "bits") {
+            || head == "bits" || head == "equation") {
             return DisplayModule { "transform", head, name };
         }
 
@@ -122,6 +123,24 @@ juce::Colour chipFillColour(juce::Colour base)
 juce::Colour chipTextColour(juce::Colour base)
 {
     return base.interpolatedWith(juce::Colours::white, 0.28f).withAlpha(0.98f);
+}
+
+juce::String formatStageNumber(double value, bool suffixMs = false)
+{
+    juce::String text;
+    if (std::abs(value - std::round(value)) < 0.001) {
+        text = juce::String(static_cast<int>(std::round(value)));
+    } else {
+        text = juce::String(value, 2);
+        while (text.contains(".") && (text.endsWith("0") || text.endsWith("."))) {
+            if (text.endsWith(".")) {
+                text = text.dropLastCharacters(1);
+                break;
+            }
+            text = text.dropLastCharacters(1);
+        }
+    }
+    return suffixMs ? text + "ms" : text;
 }
 
 void styleSecondaryButton(juce::TextButton& button)
@@ -444,6 +463,14 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::setSnapshot(FabricAudioP
 void FabricAudioProcessorEditor::GraphPreviewComponent::mouseUp(const juce::MouseEvent& event)
 {
     for (const auto& [name, region] : hitRegions_) {
+        if (name == "__back__" && region.body.contains(event.getPosition())) {
+            owner_.setGraphScope({});
+            return;
+        }
+        if (name.startsWith("__group__:") && region.body.contains(event.getPosition())) {
+            owner_.setGraphScope(name.fromFirstOccurrenceOf(":", false, false).fromFirstOccurrenceOf(":", false, false));
+            return;
+        }
         if (region.bypassButton.contains(event.getPosition())) {
             owner_.cycleNodeMode(name, FabricAudioProcessor::NodeProcessingMode::bypass);
             return;
@@ -486,7 +513,16 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
     g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
     g.drawText("LIVE I/O", header.removeFromLeft(100), juce::Justification::centredLeft, true);
     g.setFont(juce::Font(juce::FontOptions(12.0f)));
-    const auto focusName = owner_.selectedIoModuleName_.isNotEmpty() ? owner_.selectedIoModuleName_ : juce::String("Whole Patch");
+    juce::String focusName = "Whole Patch";
+    if (owner_.selectedIoModuleName_.isNotEmpty()) {
+        focusName = owner_.selectedIoModuleName_;
+        for (const auto& node : snapshot_.nodes) {
+            if (node.moduleName == owner_.selectedIoModuleName_ && node.displayName.isNotEmpty()) {
+                focusName = node.displayName;
+                break;
+            }
+        }
+    }
     g.drawText("Focus: " + focusName + "  |  Press Tab to return to the patch.", header, juce::Justification::centredRight, true);
 
     bounds.removeFromTop(8);
@@ -751,20 +787,76 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
         return;
     }
 
+    struct ViewNode {
+        juce::String id;
+        juce::String name;
+        juce::String displayName;
+        juce::String family;
+        juce::String kind;
+        juce::String detail;
+        int sourceLine = 0;
+        FabricAudioProcessor::NodeProcessingMode mode = FabricAudioProcessor::NodeProcessingMode::normal;
+        bool isGroup = false;
+    };
+
     const int nodeWidth = juce::jmin(204, bounds.getWidth() - 32);
     const int nodeHeight = 60;
     const int spacing = 20;
     juce::HashMap<juce::String, juce::Rectangle<int>> nodeBounds;
+    std::vector<ViewNode> viewNodes;
+    std::unordered_map<juce::String, int> groupedCounts;
+
+    const auto scopePrefix = owner_.graphScopePrefix_.isNotEmpty() ? owner_.graphScopePrefix_ + "__" : juce::String();
+    if (owner_.graphScopePrefix_.isNotEmpty()) {
+        auto backRect = juce::Rectangle<int>(bounds.getX() + 12, bounds.getY(), 112, 26);
+        hitRegions_["__back__"] = { backRect, {}, {} };
+        g.setColour(chipFillColour(kAccent));
+        g.fillRoundedRectangle(backRect.toFloat(), 10.0f);
+        g.setColour(chipTextColour(kAccent));
+        g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+        g.drawText("Back", backRect, juce::Justification::centred, true);
+        bounds.removeFromTop(34);
+    }
+
+    for (const auto& node : snapshot_.nodes) {
+        if (owner_.graphScopePrefix_.isEmpty()) {
+            if (node.name.contains("__")) {
+                groupedCounts[node.name.upToFirstOccurrenceOf("__", false, false)]++;
+                continue;
+            }
+            viewNodes.push_back({ node.name, node.name, node.displayName, node.family, node.kind, node.detail, node.sourceLine, node.mode, false });
+        } else {
+            if (!node.name.startsWith(scopePrefix)) {
+                continue;
+            }
+            auto trimmed = node.name.fromFirstOccurrenceOf(scopePrefix, false, false).replace("__", " / ");
+            viewNodes.push_back({ node.name, node.name, trimmed, node.family, node.kind, node.detail, node.sourceLine, node.mode, false });
+        }
+    }
+
+    if (owner_.graphScopePrefix_.isEmpty()) {
+        for (const auto& [prefix, count] : groupedCounts) {
+            viewNodes.push_back({ "__group__:" + prefix, {}, prefix, "group", "subpatch", juce::String(count) + " nodes", 0, FabricAudioProcessor::NodeProcessingMode::normal, true });
+        }
+    }
 
     int y = bounds.getY() + 10;
-    for (const auto& node : snapshot_.nodes) {
+    for (const auto& node : viewNodes) {
         auto rect = juce::Rectangle<int>(bounds.getX() + 12, y, nodeWidth, nodeHeight);
-        nodeBounds.set(node.name, rect);
+        nodeBounds.set(node.id, rect);
         y += nodeHeight + spacing;
     }
 
     g.setColour(juce::Colours::black.withAlpha(0.16f));
     for (const auto& connection : snapshot_.connections) {
+        if (owner_.graphScopePrefix_.isNotEmpty()) {
+            if (!connection.fromName.startsWith(scopePrefix) || !connection.toName.startsWith(scopePrefix)) {
+                continue;
+            }
+        } else if (connection.fromName.contains("__") || connection.toName.contains("__")) {
+            continue;
+        }
+
         if (!nodeBounds.contains(connection.fromName) || !nodeBounds.contains(connection.toName)) {
             continue;
         }
@@ -779,13 +871,13 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
         g.strokePath(path, juce::PathStrokeType(1.35f));
     }
 
-    for (const auto& node : snapshot_.nodes) {
-        auto rect = nodeBounds[node.name];
+    for (const auto& node : viewNodes) {
+        auto rect = nodeBounds[node.id];
         const auto fullRect = rect;
-        drawPanel(g, rect, juce::Colour::fromRGBA(255, 255, 255, 170), 16.0f);
+        drawPanel(g, rect, node.isGroup ? juce::Colour::fromRGBA(255, 247, 230, 180) : juce::Colour::fromRGBA(255, 255, 255, 170), 16.0f);
 
         auto accent = rect.removeFromLeft(6);
-        g.setColour(familyColour(node.family));
+        g.setColour(node.isGroup ? kAccent : familyColour(node.family));
         g.fillRoundedRectangle(accent.toFloat(), 3.0f);
 
         auto text = rect.reduced(12, 8);
@@ -801,13 +893,15 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
             g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
             g.drawText(label, buttonBounds, juce::Justification::centred, true);
         };
-        const auto baseColour = familyColour(node.family);
-        drawModeButton(bypassButton, "B", node.mode == FabricAudioProcessor::NodeProcessingMode::bypass, baseColour);
-        drawModeButton(muteButton, "M", node.mode == FabricAudioProcessor::NodeProcessingMode::mute, juce::Colour::fromRGB(170, 82, 72));
+        const auto baseColour = node.isGroup ? kAccent : familyColour(node.family);
+        if (!node.isGroup) {
+            drawModeButton(bypassButton, "B", node.mode == FabricAudioProcessor::NodeProcessingMode::bypass, baseColour);
+            drawModeButton(muteButton, "M", node.mode == FabricAudioProcessor::NodeProcessingMode::mute, juce::Colour::fromRGB(170, 82, 72));
+        }
 
         g.setColour(kInk);
         g.setFont(juce::Font(juce::FontOptions(17.0f, juce::Font::bold)));
-        g.drawText(node.name, text.removeFromTop(22), juce::Justification::centredLeft, true);
+        g.drawText(node.displayName.isNotEmpty() ? node.displayName : node.name, text.removeFromTop(22), juce::Justification::centredLeft, true);
         g.setColour(kMuted);
         g.setFont(juce::Font(juce::FontOptions(12.5f)));
         g.drawText(node.family + " / " + node.kind, text.removeFromTop(16), juce::Justification::centredLeft, true);
@@ -826,7 +920,7 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
             g.drawText(node.detail, chip.toNearestInt().reduced(7, 1), juce::Justification::centredLeft, true);
         }
 
-        hitRegions_[node.name] = { fullRect, bypassButton, muteButton };
+        hitRegions_[node.id] = { fullRect, bypassButton, muteButton };
     }
 }
 
@@ -949,6 +1043,67 @@ except velocity 120..127)", juce::dontSendNotification);
     lessonSummary_.setFont(juce::Font(juce::FontOptions("Menlo", 13.5f, juce::Font::plain)));
     addAndMakeVisible(lessonSummary_);
 
+    stageEditorLabel_.setText("Stage", juce::dontSendNotification);
+    stageEditorLabel_.setColour(juce::Label::textColourId, kInk);
+    stageEditorLabel_.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
+    addAndMakeVisible(stageEditorLabel_);
+
+    const auto configureStageLabel = [](juce::Label& label, const juce::String& text) {
+        label.setText(text, juce::dontSendNotification);
+        label.setColour(juce::Label::textColourId, kMuted);
+        label.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    };
+    configureStageLabel(stageLevelLabel_, "Level");
+    configureStageLabel(stageTimeLabel_, "Time");
+    configureStageLabel(stageOverlapLabel_, "Overlap");
+    configureStageLabel(stageCurveLabel_, "Curve");
+    addAndMakeVisible(stageLevelLabel_);
+    addAndMakeVisible(stageTimeLabel_);
+    addAndMakeVisible(stageOverlapLabel_);
+    addAndMakeVisible(stageCurveLabel_);
+
+    const auto configureSlider = [this](juce::Slider& slider) {
+        slider.setSliderStyle(juce::Slider::LinearHorizontal);
+        slider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 60, 22);
+        slider.setColour(juce::Slider::trackColourId, kAccent);
+        slider.setColour(juce::Slider::thumbColourId, kAccent.brighter(0.15f));
+        slider.setColour(juce::Slider::backgroundColourId, juce::Colour::fromRGBA(255, 255, 255, 80));
+        slider.onValueChange = [this] {
+            if (stageEditorUpdating_ || !selectedStage_.has_value()) return;
+            auto stage = *selectedStage_;
+            stage.level = stageLevelSlider_.getValue();
+            stage.timeMs = stageTimeSlider_.getValue();
+            stage.overlapMs = stageOverlapSlider_.getValue();
+            stage.curve = stageCurveBox_.getText();
+            applyEditableStage(stage);
+        };
+    };
+    configureSlider(stageLevelSlider_);
+    stageLevelSlider_.setRange(0.0, 1.0, 0.01);
+    configureSlider(stageTimeSlider_);
+    stageTimeSlider_.setRange(1.0, 5000.0, 1.0);
+    configureSlider(stageOverlapSlider_);
+    stageOverlapSlider_.setRange(0.0, 2000.0, 1.0);
+    addAndMakeVisible(stageLevelSlider_);
+    addAndMakeVisible(stageTimeSlider_);
+    addAndMakeVisible(stageOverlapSlider_);
+
+    styleHeaderComboBox(stageCurveBox_);
+    stageCurveBox_.addItem("linear", 1);
+    stageCurveBox_.addItem("smooth", 2);
+    stageCurveBox_.addItem("exp", 3);
+    stageCurveBox_.addItem("log", 4);
+    stageCurveBox_.onChange = [this] {
+        if (stageEditorUpdating_ || !selectedStage_.has_value()) return;
+        auto stage = *selectedStage_;
+        stage.level = stageLevelSlider_.getValue();
+        stage.timeMs = stageTimeSlider_.getValue();
+        stage.overlapMs = stageOverlapSlider_.getValue();
+        stage.curve = stageCurveBox_.getText();
+        applyEditableStage(stage);
+    };
+    addAndMakeVisible(stageCurveBox_);
+
     graphViewport_.setViewedComponent(&graphPreview_, false);
     graphViewport_.setScrollBarsShown(true, false);
     graphViewport_.setScrollBarThickness(10);
@@ -962,6 +1117,15 @@ except velocity 120..127)", juce::dontSendNotification);
     ioVisualiser_.setVisible(false);
     modulatorInspector_.setVisible(false);
     lessonSummary_.setVisible(false);
+    stageEditorLabel_.setVisible(false);
+    stageLevelLabel_.setVisible(false);
+    stageTimeLabel_.setVisible(false);
+    stageOverlapLabel_.setVisible(false);
+    stageCurveLabel_.setVisible(false);
+    stageLevelSlider_.setVisible(false);
+    stageTimeSlider_.setVisible(false);
+    stageOverlapSlider_.setVisible(false);
+    stageCurveBox_.setVisible(false);
 
     setWantsKeyboardFocus(true);
     addKeyListener(this);
@@ -1023,6 +1187,7 @@ void FabricAudioProcessorEditor::paint(juce::Graphics& g)
             layout.helpPanel.withTrimmedBottom(layout.helpPanel.getHeight() - 24).reduced(16, 0),
             juce::Justification::centredLeft,
             true);
+
     }
 }
 
@@ -1121,8 +1286,40 @@ void FabricAudioProcessorEditor::resized()
 
     auto helpContent = layout.helpPanel.reduced(12, 26);
     helpContent.removeFromTop(22);
-    helpSummary_.setBounds(helpContent);
-    modulatorInspector_.setBounds(helpContent);
+    if (!modulatorSnapshots_.empty()) {
+        auto inspectorArea = helpContent.removeFromTop(juce::jmax(120, helpContent.getHeight() - 118));
+        modulatorInspector_.setBounds(inspectorArea);
+        helpContent.removeFromTop(6);
+        stageEditorLabel_.setBounds(helpContent.removeFromTop(18));
+        auto row1 = helpContent.removeFromTop(28);
+        stageLevelLabel_.setBounds(row1.removeFromLeft(54));
+        stageLevelSlider_.setBounds(row1);
+        helpContent.removeFromTop(4);
+        auto row2 = helpContent.removeFromTop(28);
+        stageTimeLabel_.setBounds(row2.removeFromLeft(54));
+        stageTimeSlider_.setBounds(row2);
+        helpContent.removeFromTop(4);
+        auto row3 = helpContent.removeFromTop(28);
+        stageOverlapLabel_.setBounds(row3.removeFromLeft(54));
+        stageOverlapSlider_.setBounds(row3);
+        helpContent.removeFromTop(4);
+        auto row4 = helpContent.removeFromTop(28);
+        stageCurveLabel_.setBounds(row4.removeFromLeft(54));
+        stageCurveBox_.setBounds(row4.removeFromLeft(120));
+        helpSummary_.setBounds({});
+    } else {
+        helpSummary_.setBounds(helpContent);
+        modulatorInspector_.setBounds({});
+        stageEditorLabel_.setBounds({});
+        stageLevelLabel_.setBounds({});
+        stageTimeLabel_.setBounds({});
+        stageOverlapLabel_.setBounds({});
+        stageCurveLabel_.setBounds({});
+        stageLevelSlider_.setBounds({});
+        stageTimeSlider_.setBounds({});
+        stageOverlapSlider_.setBounds({});
+        stageCurveBox_.setBounds({});
+    }
 
     sectionPulseOverlay_.setBounds(getLocalBounds());
     applyViewMode();
@@ -1130,12 +1327,6 @@ void FabricAudioProcessorEditor::resized()
 
 void FabricAudioProcessorEditor::timerCallback()
 {
-    const auto now = juce::Time::getMillisecondCounterHiRes();
-    if (pendingDebouncedCompile_ && (now - lastEditTimeMs_) >= kDebounceMs) {
-        pendingDebouncedCompile_ = false;
-        processor_.requestCompile(document_.getAllContent());
-    }
-
     const auto revision = processor_.getUiRevision();
     if (revision != seenRevision_) {
         refreshFromProcessor();
@@ -1167,15 +1358,13 @@ void FabricAudioProcessorEditor::timerCallback()
 
 void FabricAudioProcessorEditor::codeDocumentTextInserted(const juce::String&, int)
 {
-    lastEditTimeMs_ = juce::Time::getMillisecondCounterHiRes();
-    pendingDebouncedCompile_ = true;
+    processor_.setPendingScriptText(document_.getAllContent());
     moduleOverlay_.repaint();
 }
 
 void FabricAudioProcessorEditor::codeDocumentTextDeleted(int, int)
 {
-    lastEditTimeMs_ = juce::Time::getMillisecondCounterHiRes();
-    pendingDebouncedCompile_ = true;
+    processor_.setPendingScriptText(document_.getAllContent());
     moduleOverlay_.repaint();
 }
 
@@ -1235,7 +1424,6 @@ void FabricAudioProcessorEditor::selectedRowsChanged(int lastRowSelected)
 
 void FabricAudioProcessorEditor::requestCompileNow()
 {
-    pendingDebouncedCompile_ = false;
     processor_.requestCompile(document_.getAllContent());
 }
 
@@ -1264,7 +1452,7 @@ void FabricAudioProcessorEditor::rebuildIoModuleBrowser()
     int selectedIndex = 0;
     for (int index = 0; index < static_cast<int>(ioSnapshot_.nodes.size()); ++index) {
         const auto& node = ioSnapshot_.nodes[static_cast<std::size_t>(index)];
-        ioModuleBox_.addItem(node.moduleName, index + 2);
+        ioModuleBox_.addItem(node.displayName.isNotEmpty() ? node.displayName : node.moduleName, index + 2);
         if (node.moduleName == selectedIoModuleName_) {
             selectedIndex = index + 1;
         }
@@ -1303,9 +1491,14 @@ void FabricAudioProcessorEditor::loadSelectedTutorial()
     }
 
     document_.replaceAllContent(tutorial->script);
-    pendingDebouncedCompile_ = false;
-    processor_.requestCompile(tutorial->script);
+    processor_.setPendingScriptText(tutorial->script);
     updateTutorialSummary();
+}
+
+void FabricAudioProcessorEditor::setGraphScope(const juce::String& scope)
+{
+    graphScopePrefix_ = scope;
+    graphPreview_.repaint();
 }
 
 void FabricAudioProcessorEditor::refreshFromProcessor()
@@ -1327,6 +1520,14 @@ void FabricAudioProcessorEditor::refreshFromProcessor()
     diagnosticsList_.setVisible(!diagnostics_.empty());
     diagnosticsSummary_.setVisible(!diagnostics_.empty());
     graphSnapshot_ = processor_.getGraphSnapshot();
+    if (graphScopePrefix_.isNotEmpty()) {
+        const auto stillExists = std::any_of(graphSnapshot_.nodes.begin(), graphSnapshot_.nodes.end(), [this](const auto& node) {
+            return node.name.startsWith(graphScopePrefix_ + "__");
+        });
+        if (!stillExists) {
+            graphScopePrefix_.clear();
+        }
+    }
     ioSnapshot_ = processor_.getIoSnapshot();
     rebuildIoModuleBrowser();
     modulatorSnapshots_ = processor_.getModulatorSnapshots();
@@ -1337,6 +1538,18 @@ void FabricAudioProcessorEditor::refreshFromProcessor()
         inspectedModulatorName_ = modulatorSnapshots_.front().moduleName;
     } else if (modulatorSnapshots_.empty()) {
         inspectedModulatorName_.clear();
+        selectedStage_.reset();
+    }
+
+    if (!modulatorSnapshots_.empty()) {
+        if (!selectedStage_.has_value()
+            || selectedStage_->moduleName != inspectedModulatorName_
+            || !findEditableStage(selectedStage_->moduleName, selectedStage_->channel, selectedStage_->stage).has_value()) {
+            selectModulatorStage(inspectedModulatorName_, 1, 1);
+        } else {
+            selectedStage_ = findEditableStage(selectedStage_->moduleName, selectedStage_->channel, selectedStage_->stage);
+            refreshStageEditor();
+        }
     }
     updateStateTracking(graphSnapshot_);
     sectionControls_ = processor_.getSectionControls();
@@ -1380,6 +1593,16 @@ void FabricAudioProcessorEditor::applyViewMode()
     diagnosticsSummary_.setVisible(showingEditor && !diagnostics_.empty());
     helpSummary_.setVisible(showingEditor && modulatorSnapshots_.empty());
     modulatorInspector_.setVisible(showingEditor && !modulatorSnapshots_.empty());
+    const auto showingStageEditor = showingEditor && !modulatorSnapshots_.empty() && selectedStage_.has_value();
+    stageEditorLabel_.setVisible(showingStageEditor);
+    stageLevelLabel_.setVisible(showingStageEditor);
+    stageTimeLabel_.setVisible(showingStageEditor);
+    stageOverlapLabel_.setVisible(showingStageEditor);
+    stageCurveLabel_.setVisible(showingStageEditor);
+    stageLevelSlider_.setVisible(showingStageEditor);
+    stageTimeSlider_.setVisible(showingStageEditor);
+    stageOverlapSlider_.setVisible(showingStageEditor);
+    stageCurveBox_.setVisible(showingStageEditor);
     ioVisualiser_.setVisible(showingIo);
     lessonSummary_.setVisible(showingLessons);
 }
@@ -1420,8 +1643,7 @@ void FabricAudioProcessorEditor::loadPatchFromFile()
 
             lastPatchFile_ = file;
             document_.replaceAllContent(content);
-            pendingDebouncedCompile_ = false;
-            processor_.requestCompile(content);
+            processor_.setPendingScriptText(content);
         });
 }
 
@@ -1624,6 +1846,8 @@ void FabricAudioProcessorEditor::jumpToModulatorStage(const juce::String& module
         return;
     }
 
+    selectModulatorStage(moduleName, channel, stage);
+
     bool inTargetModule = false;
     const auto lineCount = document_.getNumLines();
     for (int lineIndex = 0; lineIndex < lineCount; ++lineIndex) {
@@ -1641,7 +1865,8 @@ void FabricAudioProcessorEditor::jumpToModulatorStage(const juce::String& module
         }
 
         if (!inTargetModule) {
-            if (tokens.size() >= 3 && tokens[0] == "shape" && tokens[1] == "modulator" && tokens[2] == moduleName) {
+            if ((tokens.size() >= 2 && tokens[0] == "modulator" && tokens[1] == moduleName)
+                || (tokens.size() >= 3 && tokens[0] == "shape" && tokens[1] == "modulator" && tokens[2] == moduleName)) {
                 inTargetModule = true;
             }
             continue;
@@ -1656,7 +1881,8 @@ void FabricAudioProcessorEditor::jumpToModulatorStage(const juce::String& module
         }
 
         const bool stageMatches = tokens.size() >= 2 && tokens[1].getIntValue() == stage;
-        const bool channelMatches = trimmed.containsWholeWord("channel") && trimmed.containsWholeWord(juce::String(channel));
+        const bool channelMatches = (trimmed.containsWholeWord("channel") || trimmed.containsWholeWord("ch"))
+            && trimmed.containsWholeWord(juce::String(channel));
         if (stageMatches && channelMatches) {
             jumpToModuleLine(lineIndex + 1);
             return;
@@ -1667,7 +1893,138 @@ void FabricAudioProcessorEditor::jumpToModulatorStage(const juce::String& module
 void FabricAudioProcessorEditor::focusModulator(const juce::String& moduleName)
 {
     inspectedModulatorName_ = moduleName;
+    if (!selectedStage_.has_value() || selectedStage_->moduleName != moduleName) {
+        selectModulatorStage(moduleName, 1, 1);
+    }
     modulatorInspector_.setSnapshots(modulatorSnapshots_, inspectedModulatorName_);
+}
+
+void FabricAudioProcessorEditor::selectModulatorStage(const juce::String& moduleName, int channel, int stage)
+{
+    selectedStage_ = findEditableStage(moduleName, channel, stage);
+    if (!selectedStage_.has_value()) {
+        stageEditorUpdating_ = true;
+        stageEditorLabel_.setText("Stage", juce::dontSendNotification);
+        stageEditorUpdating_ = false;
+        applyViewMode();
+        return;
+    }
+    refreshStageEditor();
+}
+
+void FabricAudioProcessorEditor::refreshStageEditor()
+{
+    stageEditorUpdating_ = true;
+    if (selectedStage_.has_value()) {
+        const auto& stage = *selectedStage_;
+        stageEditorLabel_.setText(stage.moduleName + "  CH" + juce::String(stage.channel) + "  STAGE " + juce::String(stage.stage), juce::dontSendNotification);
+        stageLevelSlider_.setValue(stage.level, juce::dontSendNotification);
+        stageTimeSlider_.setValue(stage.timeMs, juce::dontSendNotification);
+        stageOverlapSlider_.setValue(stage.overlapMs, juce::dontSendNotification);
+        stageCurveBox_.setText(stage.curve, juce::dontSendNotification);
+    } else {
+        stageEditorLabel_.setText("Stage", juce::dontSendNotification);
+    }
+    stageEditorUpdating_ = false;
+    applyViewMode();
+    resized();
+}
+
+std::optional<FabricAudioProcessorEditor::EditableStage> FabricAudioProcessorEditor::findEditableStage(const juce::String& moduleName, int channel, int stage) const
+{
+    bool inTargetModule = false;
+    const auto lineCount = document_.getNumLines();
+    for (int lineIndex = 0; lineIndex < lineCount; ++lineIndex) {
+        const auto trimmed = document_.getLine(lineIndex).trim();
+        if (trimmed.isEmpty()) {
+            continue;
+        }
+
+        juce::StringArray tokens;
+        tokens.addTokens(trimmed, " \t", {});
+        tokens.trim();
+        tokens.removeEmptyStrings();
+        if (tokens.isEmpty()) {
+            continue;
+        }
+
+        if (!inTargetModule) {
+            if ((tokens.size() >= 2 && tokens[0] == "modulator" && tokens[1] == moduleName)
+                || (tokens.size() >= 3 && tokens[0] == "shape" && tokens[1] == "modulator" && tokens[2] == moduleName)) {
+                inTargetModule = true;
+            }
+            continue;
+        }
+
+        if (trimmed == "end") {
+            break;
+        }
+
+        if (tokens[0] != "stage" || tokens.size() < 2 || tokens[1].getIntValue() != stage) {
+            continue;
+        }
+
+        EditableStage info;
+        info.moduleName = moduleName;
+        info.channel = channel;
+        info.stage = stage;
+        info.lineIndex = lineIndex;
+
+        for (int index = 2; index + 1 < tokens.size(); index += 2) {
+            const auto key = tokens[index];
+            const auto value = tokens[index + 1];
+            if ((key == "channel" || key == "ch") && value.getIntValue() == channel) {
+                info.channel = channel;
+            } else if ((key == "level" || key == "to")) {
+                info.level = value.getDoubleValue();
+            } else if (key == "time" || key == "for" || key == "in") {
+                info.timeMs = value.upToLastOccurrenceOf("ms", false, false).getDoubleValue();
+            } else if (key == "overlap") {
+                info.overlapMs = value.upToLastOccurrenceOf("ms", false, false).getDoubleValue();
+            } else if (key == "curve") {
+                info.curve = value;
+            }
+        }
+
+        if (trimmed.containsWholeWord(juce::String(channel))
+            && (trimmed.containsWholeWord("channel") || trimmed.containsWholeWord("ch"))) {
+            return info;
+        }
+    }
+
+    return std::nullopt;
+}
+
+void FabricAudioProcessorEditor::applyEditableStage(const EditableStage& stage)
+{
+    auto lines = juce::StringArray::fromLines(document_.getAllContent());
+    if (stage.lineIndex < 0 || stage.lineIndex >= lines.size()) {
+        return;
+    }
+
+    juce::String indent;
+    const auto originalLine = lines[stage.lineIndex];
+    for (auto ch : originalLine) {
+        if (ch == ' ' || ch == '\t') indent << ch;
+        else break;
+    }
+
+    juce::String updatedLine;
+    updatedLine << indent
+            << "stage " << stage.stage
+            << " ch " << stage.channel
+            << " to " << formatStageNumber(stage.level)
+            << " for " << formatStageNumber(stage.timeMs, true);
+    if (stage.overlapMs > 0.0) {
+        updatedLine << " overlap " << formatStageNumber(stage.overlapMs, true);
+    }
+    updatedLine << " curve " << stage.curve;
+
+    lines.set(stage.lineIndex, updatedLine);
+    const auto updated = lines.joinIntoString("\n");
+    selectedStage_ = stage;
+    document_.replaceAllContent(updated);
+    processor_.setPendingScriptText(updated);
 }
 
 void FabricAudioProcessorEditor::cycleNodeMode(const juce::String& moduleName, FabricAudioProcessor::NodeProcessingMode mode)

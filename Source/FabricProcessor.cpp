@@ -3779,7 +3779,12 @@ notes1 -> out
 juce::StringArray FabricAudioProcessor::getTutorialNames() const
 {
     juce::StringArray names;
+    const auto wantsGenerate = pluginTargetsGenerate();
     for (const auto& tutorial : tutorials()) {
+        const bool usesIncomingMidi = tutorial.script.contains("midi in ");
+        if (usesIncomingMidi == wantsGenerate) {
+            continue;
+        }
         names.add(tutorial.name);
     }
     return names;
@@ -3787,12 +3792,22 @@ juce::StringArray FabricAudioProcessor::getTutorialNames() const
 
 std::optional<FabricAudioProcessor::TutorialInfo> FabricAudioProcessor::getTutorial(int index) const
 {
-    const auto& entries = tutorials();
-    if (index < 0 || index >= static_cast<int>(entries.size())) {
-        return std::nullopt;
+    const auto wantsGenerate = pluginTargetsGenerate();
+    int filteredIndex = 0;
+    for (const auto& entry : tutorials()) {
+        const bool usesIncomingMidi = entry.script.contains("midi in ");
+        if (usesIncomingMidi == wantsGenerate) {
+            continue;
+        }
+
+        if (filteredIndex == index) {
+            return TutorialInfo { entry.name, entry.summary, entry.script };
+        }
+
+        ++filteredIndex;
     }
-    const auto& entry = entries[static_cast<std::size_t>(index)];
-    return TutorialInfo { entry.name, entry.summary, entry.script };
+
+    return std::nullopt;
 }
 
 FabricAudioProcessor::CompileResult FabricAudioProcessor::buildCompileResult(const juce::String& scriptText) const

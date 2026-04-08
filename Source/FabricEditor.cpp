@@ -23,12 +23,12 @@ bool pluginIsGenerate(const juce::String& pluginName)
 juce::String quickStartTextForPlugin(const juce::String& pluginName)
 {
     if (pluginIsGenerate(pluginName)) {
-        return R"(quick start
-1. Press play in Logic to start the patch.
-2. Use Tempo: Host to follow Logic BPM or Tempo: Patch to use the script tempo.
+        return R"(Quick Start
+1. Press Play in Logic to start the patch.
+2. Use Tempo: Host to follow Logic BPM, or Tempo: Patch to use the script tempo.
 3. Load an example, edit the patch, then click Apply Patch.
 
-good generate modules
+Good Generate Modules
 clock
 pattern
 random
@@ -37,18 +37,30 @@ progression
 notes)";
     }
 
-    return R"(quick start
-1. Feed MIDI notes into the plugin from a track or keyboard.
+    return R"(Quick Start
+1. Send MIDI notes into the plugin from a track or keyboard.
 2. Start with Scale Correct or Hold Longer.
 3. Edit the patch, then click Apply Patch.
 
-good process modules
+Good Process Modules
 quantize
 length
 bits
 split
 delay
 smear)";
+}
+
+juce::Colour roleAccentForPlugin(const juce::String& pluginName)
+{
+    return pluginIsGenerate(pluginName)
+        ? juce::Colour::fromRGB(208, 126, 42)
+        : juce::Colour::fromRGB(62, 122, 196);
+}
+
+juce::String roleLabelForPlugin(const juce::String& pluginName)
+{
+    return pluginIsGenerate(pluginName) ? "GENERATE" : "PROCESS";
 }
 
 juce::CodeEditorComponent::ColourScheme makeFabricColourScheme()
@@ -539,15 +551,25 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::setSnapshot(FabricAudioP
 void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colours::transparentBlack);
+    const auto pluginName = owner_.processor_.getName();
+    const auto roleAccent = roleAccentForPlugin(pluginName);
+    const auto isGenerate = pluginIsGenerate(pluginName);
 
     auto bounds = getLocalBounds().reduced(8);
     drawPanel(g, bounds, kPanelStrong, 24.0f);
     bounds.reduce(20, 18);
 
     auto header = bounds.removeFromTop(28);
-    g.setColour(kMuted);
+    auto roleChip = header.removeFromLeft(118).reduced(0, 2);
+    g.setColour(chipFillColour(roleAccent).withAlpha(0.95f));
+    g.fillRoundedRectangle(roleChip.toFloat(), 10.0f);
+    g.setColour(chipTextColour(roleAccent));
+    g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+    g.drawText(roleLabelForPlugin(pluginName), roleChip.reduced(10, 1), juce::Justification::centredLeft, true);
+    header.removeFromLeft(10);
+    g.setColour(kMuted.withAlpha(0.95f));
     g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
-    g.drawText("LIVE I/O", header.removeFromLeft(100), juce::Justification::centredLeft, true);
+    g.drawText(isGenerate ? "TRANSPORT + OUTPUT" : "INPUT + OUTPUT", header.removeFromLeft(160), juce::Justification::centredLeft, true);
     g.setFont(juce::Font(juce::FontOptions(12.0f)));
     juce::String focusName = "Whole Patch";
     if (owner_.selectedIoModuleName_.isNotEmpty()) {
@@ -712,8 +734,12 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
         }
     };
 
-    drawLane(left, "Incoming", snapshot.incomingCount, snapshot.incomingActiveCount, snapshot.incomingHistory, snapshot.incomingActive, snapshot.incoming, familyColour("input"));
-    drawLane(right, "Outgoing", snapshot.outgoingCount, snapshot.outgoingActiveCount, snapshot.outgoingHistory, snapshot.outgoingActive, snapshot.outgoing, familyColour("output"));
+    const auto leftTitle = isGenerate ? "Transport / Start-Stop" : "Incoming MIDI";
+    const auto rightTitle = isGenerate ? "Generated MIDI" : "Processed MIDI";
+    const auto leftAccent = isGenerate ? roleAccent.brighter(0.05f) : familyColour("input");
+    const auto rightAccent = isGenerate ? familyColour("generate") : familyColour("output");
+    drawLane(left, leftTitle, snapshot.incomingCount, snapshot.incomingActiveCount, snapshot.incomingHistory, snapshot.incomingActive, snapshot.incoming, leftAccent);
+    drawLane(right, rightTitle, snapshot.outgoingCount, snapshot.outgoingActiveCount, snapshot.outgoingHistory, snapshot.outgoingActive, snapshot.outgoing, rightAccent);
 }
 
 void FabricAudioProcessorEditor::ModulatorInspectorComponent::setSnapshots(std::vector<FabricAudioProcessor::ModulatorSnapshot> snapshots, juce::String inspectedModule)
@@ -816,6 +842,9 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colours::transparentBlack);
     hitRegions_.clear();
+    const auto pluginName = owner_.processor_.getName();
+    const auto roleAccent = roleAccentForPlugin(pluginName);
+    const auto isGenerate = pluginIsGenerate(pluginName);
 
     auto bounds = getLocalBounds().reduced(8);
     drawPanel(g, bounds, kPanel, 22.0f);
@@ -827,6 +856,19 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
         g.drawFittedText("Graph preview appears here after a successful compile.", bounds, juce::Justification::centred, 2);
         return;
     }
+
+    auto roleHeader = bounds.removeFromTop(28);
+    auto roleChip = roleHeader.removeFromLeft(108).reduced(0, 2);
+    g.setColour(chipFillColour(roleAccent).withAlpha(0.95f));
+    g.fillRoundedRectangle(roleChip.toFloat(), 10.0f);
+    g.setColour(chipTextColour(roleAccent));
+    g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
+    g.drawText(roleLabelForPlugin(pluginName), roleChip.reduced(10, 1), juce::Justification::centredLeft, true);
+    roleHeader.removeFromLeft(10);
+    g.setColour(kMuted.withAlpha(0.95f));
+    g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    g.drawText(isGenerate ? "Generate Signal Flow" : "Process Signal Flow", roleHeader.removeFromLeft(190), juce::Justification::centredLeft, true);
+    bounds.removeFromTop(6);
 
     struct ViewNode {
         juce::String id;
@@ -888,8 +930,8 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
         y += nodeHeight + spacing;
     }
 
-    g.setColour(juce::Colours::black.withAlpha(0.16f));
-    for (const auto& connection : snapshot_.connections) {
+        g.setColour((isGenerate ? roleAccent : familyColour("transform")).withAlpha(0.26f));
+        for (const auto& connection : snapshot_.connections) {
         if (owner_.graphScopePrefix_.isNotEmpty()) {
             if (!connection.fromName.startsWith(scopePrefix) || !connection.toName.startsWith(scopePrefix)) {
                 continue;
@@ -915,7 +957,12 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
     for (const auto& node : viewNodes) {
         auto rect = nodeBounds[node.id];
         const auto fullRect = rect;
-        drawPanel(g, rect, node.isGroup ? juce::Colour::fromRGBA(255, 247, 230, 180) : juce::Colour::fromRGBA(255, 255, 255, 170), 16.0f);
+        const auto nodeFill = node.isGroup
+            ? juce::Colour::fromRGBA(255, 247, 230, 180)
+            : (isGenerate
+                ? juce::Colour::fromRGBA(255, 249, 241, 176)
+                : juce::Colour::fromRGBA(245, 249, 255, 176));
+        drawPanel(g, rect, nodeFill, 16.0f);
 
         auto accent = rect.removeFromLeft(6);
         g.setColour(node.isGroup ? kAccent : familyColour(node.family));
@@ -1213,7 +1260,10 @@ void FabricAudioProcessorEditor::paint(juce::Graphics& g)
         g.setColour(kMuted);
         g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
         g.drawText("PATCH", layout.editorPanel.withTrimmedBottom(layout.editorPanel.getHeight() - 26).reduced(16, 0), juce::Justification::centredLeft, true);
-        g.drawText("FLOW", layout.graphPanel.withTrimmedBottom(layout.graphPanel.getHeight() - 26).reduced(16, 0), juce::Justification::centredLeft, true);
+        g.drawText(pluginIsGenerate(processor_.getName()) ? "GENERATOR FLOW" : "PROCESSOR FLOW",
+            layout.graphPanel.withTrimmedBottom(layout.graphPanel.getHeight() - 26).reduced(16, 0),
+            juce::Justification::centredLeft,
+            true);
         if (!layout.diagnosticsPanel.isEmpty()) {
             g.drawText("DIAGNOSTICS", layout.diagnosticsPanel.withTrimmedBottom(layout.diagnosticsPanel.getHeight() - 24).reduced(16, 0), juce::Justification::centredLeft, true);
         }
@@ -1511,9 +1561,9 @@ void FabricAudioProcessorEditor::updateTutorialSummary()
     summary << tutorial->name << "\n\n";
     summary << tutorial->summary << "\n\n";
     summary << "Load Example replaces the current patch with this example.\n";
-    summary << "Press Tab to cycle editor -> I/O -> lessons.\n";
+    summary << "Press Tab to cycle editor -> I/O -> examples.\n";
     summary << "Click graph nodes to jump to code.\n";
-    summary << "Use the Examples dropdown in the header to choose a patch.\n";
+    summary << "Use the Examples menu in the header to choose a patch.\n";
     lessonSummary_.setText(summary, juce::dontSendNotification);
 }
 

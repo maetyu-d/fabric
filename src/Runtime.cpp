@@ -899,31 +899,6 @@ public:
         const auto interval = parseTimeToken(everyToken_, context.bpm);
         const auto blockDuration = static_cast<double>(context.blockSize) / context.sampleRate;
 
-        if (context.syncToTransport) {
-            if (!context.transportPlaying || context.bpm <= 0.0) {
-                syncArmed_ = false;
-                return;
-            }
-
-            const auto beatLengthSeconds = 60.0 / context.bpm;
-            const auto blockBeats = blockDuration / beatLengthSeconds;
-            const auto startBeat = context.transportPpq;
-            const auto endBeat = startBeat + blockBeats;
-            if (!syncArmed_ || startBeat + 1.0e-9 < nextTriggerBeats_) {
-                nextTriggerBeats_ = startBeat;
-                stepIndex_ = 0;
-                syncArmed_ = true;
-            }
-
-            while (nextTriggerBeats_ <= endBeat + 1.0e-9) {
-                const auto stepDurationBeats = stepDurationSeconds(interval, context.bpm) / beatLengthSeconds;
-                emitStep(outputs, nextTriggerBeats_, startBeat, beatLengthSeconds, stepDurationBeats, true, beatLengthSeconds);
-                nextTriggerBeats_ += stepDurationBeats;
-                ++stepIndex_;
-            }
-            return;
-        }
-
         const auto start = elapsedSeconds_;
         const auto end = elapsedSeconds_ + blockDuration;
 
@@ -5761,7 +5736,7 @@ private:
         const auto absoluteTime = runningTimeSeconds_ + eventTime;
         vars["t"] = absoluteTime;
         vars["time"] = absoluteTime;
-        vars["beat"] = context.transportPpq + (absoluteTime * context.bpm / 60.0);
+        vars["beat"] = absoluteTime * context.bpm / 60.0;
         vars["bpm"] = context.bpm;
         vars["value"] = currentScalarAtTime(inputs, "value", eventTime, lastValueInput_);
         vars["pitch"] = currentScalarAtTime(inputs, "pitch", eventTime, lastPitchInput_);

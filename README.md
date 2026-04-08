@@ -2,7 +2,7 @@
 
 ![](https://github.com/maetyu-d/fabric/blob/main/Screenshot%202026-03-27%20at%2010.40.35.png)
 
-Fabric is a small, human-readable patch language for building modular MIDI music systems inside a JUCE-based Audio Unit MIDI Effect plugin (VST3 and standalone also available but untested). It is primarily for:
+Fabric is a small, human-readable patch language for building modular MIDI music systems inside JUCE-based MIDI effect plugins. The project now builds two plugin variants, `Fabric Generate` and `Fabric Process` (with VST3, AU, and standalone targets). It is primarily for:
 
 - generating MIDI
 - transforming MIDI
@@ -1242,7 +1242,7 @@ Inside a JUCE MIDI effect plugin, the architecture is something like:
 
 For each `processBlock`:
 
-1. Read host transport and tempo if available.
+1. Read host tempo if enabled, otherwise use the patch tempo.
 2. Feed incoming MIDI into `midi in` nodes.
 3. Advance clocks and timed shapes.
 4. Run graph nodes in topological order.

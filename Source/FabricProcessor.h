@@ -150,8 +150,8 @@ public:
     juce::StringArray getTutorialNames() const;
     std::optional<TutorialInfo> getTutorial(int index) const;
     IoSnapshot getIoSnapshot() const;
-    bool isSyncToTransportEnabled() const;
-    void setSyncToTransportEnabled(bool enabled);
+    bool isHostTempoFollowEnabled() const;
+    void setHostTempoFollowEnabled(bool enabled);
     std::uint64_t getUiRevision() const;
     bool isCompileInProgress() const;
     void requestSectionRecall(const juce::String& moduleName, int sectionIndex);
@@ -166,6 +166,7 @@ private:
         juce::StringArray outputModuleNames;
         std::vector<SectionControlSnapshot> sectionControls;
         GraphSnapshot graph;
+        double tempoBpm = 120.0;
     };
 
     struct CompileResult {
@@ -193,6 +194,7 @@ private:
     static IoEventSummary summariseEvent(const pulse::Event& event);
     static IoSnapshot buildIoSnapshot(const std::vector<pulse::Event>& incoming, const std::vector<pulse::Event>& outgoing);
     static std::vector<NodeIoSnapshot> buildNodeIoSnapshots(const pulse::Engine& engine);
+    static std::vector<pulse::Event> activeNoteOffEvents(const std::array<std::uint8_t, 128>& activeNotes);
     static void updateActiveNotes(std::array<std::uint8_t, 128>& activeNotes, const std::vector<pulse::Event>& events);
     static void pushHistory(std::array<std::uint8_t, 32>& history, int count);
     static int countActiveNotes(const std::array<std::uint8_t, 128>& activeNotes);
@@ -218,13 +220,15 @@ private:
     std::unordered_map<juce::String, int> activeSectionIndices_;
     std::unordered_map<juce::String, double> activeSectionPhases_;
     std::unordered_map<juce::String, std::uint64_t> sectionAdvanceCounts_;
-    std::atomic<bool> syncToTransport_ { true };
+    std::atomic<bool> followHostTempo_ { true };
     std::array<std::uint8_t, 128> incomingActiveNotes_ {};
     std::array<std::uint8_t, 128> outgoingActiveNotes_ {};
     std::array<std::uint8_t, 32> incomingHistory_ {};
     std::array<std::uint8_t, 32> outgoingHistory_ {};
     IoSnapshot ioSnapshot_;
     std::optional<int> currentProgramIndex_;
+    bool transportStateKnown_ = false;
+    bool transportWasPlaying_ = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FabricAudioProcessor)
 };

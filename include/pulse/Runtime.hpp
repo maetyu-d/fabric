@@ -54,9 +54,6 @@ struct ProcessContext {
     double sampleRate = 44100.0;
     std::uint32_t blockSize = 512;
     double bpm = 120.0;
-    double transportPpq = 0.0;
-    bool transportPlaying = false;
-    bool syncToTransport = true;
 };
 
 struct ModulatorChannelStateSnapshot {

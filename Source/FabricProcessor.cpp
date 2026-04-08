@@ -28,40 +28,95 @@ struct FactoryPresetData {
     const char* script;
 };
 
+constexpr bool pluginTargetsGenerate()
+{
+#if defined(FABRIC_PLUGIN_MODE_PROCESS)
+    return false;
+#else
+    return true;
+#endif
+}
+
+double extractTempoBpm(const juce::String& scriptText)
+{
+    for (const auto& line : juce::StringArray::fromLines(scriptText)) {
+        const auto trimmed = line.trim();
+        if (!trimmed.startsWithIgnoreCase("tempo ")) {
+            continue;
+        }
+
+        juce::StringArray tokens;
+        tokens.addTokens(trimmed, " \t", "");
+        if (tokens.size() < 2) {
+            continue;
+        }
+
+        const auto tempo = tokens[1].getDoubleValue();
+        if (tempo > 0.0) {
+            return tempo;
+        }
+    }
+
+    return 120.0;
+}
+
 juce::String makeDefaultScript()
 {
-    return R"pulse(patch fabric_default
+    return R"pulse(patch fabric_generate_default
 
-key D dorian
-
-midi in keys
-  channel 1
-end
+scale D dorian
+tempo 120
 
 clock metro
-  every 1/16
+  every 1/8
 end
 
-quantize in_key
-  key D dorian
+pattern riff
+  notes D3 F3 A3 C4
+  order up_down
 end
 
-arp arp1
-  gate 70%
+notes lead
+  scale D dorian
+  gate 62%
+  velocity 100
 end
 
 midi out out
 end
 
-keys -> in_key
-in_key -> arp1
-metro -> arp1.trigger
-arp1 -> out
+metro -> riff.trigger
+riff -> lead
+lead -> out
 end
 )pulse";
 }
 
-std::vector<FactoryPresetData> makeFactoryPresets()
+juce::String makeProcessDefaultScript()
+{
+    return R"pulse(patch fabric_process_default
+
+scale D dorian
+tempo 120
+
+midi in input
+  channel 1
+end
+
+quantize correct_pitch
+  scale D dorian
+end
+
+midi out out
+end
+
+input -> correct_pitch
+correct_pitch -> out
+end
+)pulse";
+}
+
+[[maybe_unused]] std::vector<FactoryPresetData> makeFactoryPresets()
 {
     return {
         { "Default Arp",
@@ -1496,6 +1551,280 @@ end
     };
 }
 
+// Generate presets must be self-contained and should not require any incoming MIDI.
+std::vector<FactoryPresetData> makeGenerateFactoryPresets()
+{
+    return {
+        { "Clocked Pattern",
+            R"pulse(patch clocked_pattern
+
+scale D dorian
+tempo 120
+
+clock metro
+  every 1/8
+end
+
+pattern riff
+  notes D3 F3 A3 C4
+  order up_down
+end
+
+notes lead
+  scale D dorian
+  gate 62%
+  velocity 100
+end
+
+midi out out
+end
+
+metro -> riff.trigger
+riff -> lead
+lead -> out
+end
+)pulse" },
+        { "Random Walk Melody",
+            R"pulse(patch random_walk_melody
+
+scale D dorian
+tempo 120
+
+clock metro
+  every 1/16
+end
+
+random walker
+  notes D3 F3 A3 C4 E4
+  mode walk
+  distribution gaussian
+  avoid repeat
+  max step 4
+  seed 42
+end
+
+notes lead
+  scale D dorian
+  gate 55%
+  velocity 96
+end
+
+midi out out
+end
+
+metro -> walker.trigger
+walker -> lead
+lead -> out
+end
+)pulse" },
+        { "Chord Pulse",
+            R"pulse(patch chord_pulse
+
+scale C major
+tempo 110
+
+clock metro
+  every 1/8
+end
+
+progression chords
+  targets tonic subdominant dominant tonic
+  lengths 2 2 2 2
+end
+
+notes voicer
+  chord triad
+  invert 1
+  spread 1 octave
+  gate 72%
+  velocity 94
+end
+
+midi out out
+end
+
+metro -> chords.trigger
+metro -> voicer.trigger
+chords -> voicer
+voicer -> out
+end
+)pulse" },
+        { "Chance Notes",
+            R"pulse(patch chance_notes
+
+scale D minor
+tempo 120
+
+clock metro
+  every 1/8
+end
+
+chance oracle
+  dice D3 F3 A3 C4 E4
+  seed 7
+end
+
+notes lead
+  scale D minor
+  gate 60%
+  velocity 98
+end
+
+midi out out
+end
+
+metro -> oracle.trigger
+oracle.pitch -> lead
+lead -> out
+end
+)pulse" },
+        { "Equation Motion",
+            R"pulse(patch equation_motion
+
+scale D dorian
+tempo 120
+
+clock metro
+  every 1/16
+end
+
+equation curve
+  pitch = 60 + sin(t * 2.2) * 7 + cos(t * 0.4) * 3
+end
+
+notes lead
+  scale D dorian
+  gate 58%
+  velocity 92
+end
+
+midi out out
+end
+
+metro -> curve.trigger
+curve.pitch -> lead
+lead -> out
+end
+)pulse" }
+    };
+}
+
+// Process presets must start from incoming MIDI and reshape or transform it.
+std::vector<FactoryPresetData> makeProcessFactoryPresets()
+{
+    return {
+        { "Scale Correct",
+            R"pulse(patch fabric_process_default
+
+scale D dorian
+tempo 120
+
+midi in input
+  channel 1
+end
+
+quantize correct_pitch
+  scale D dorian
+end
+
+midi out out
+end
+
+input -> correct_pitch
+correct_pitch -> out
+end
+)pulse" },
+        { "Hold Longer",
+            R"pulse(patch hold_longer
+
+midi in input
+end
+
+length hold
+  time 240ms
+end
+
+midi out out
+end
+
+input -> hold
+hold -> out
+)pulse" },
+        { "Velocity Tighten",
+            R"pulse(patch velocity_tighten
+
+midi in input
+end
+
+bits crush_velocity
+  target velocity
+  and 11110000b
+end
+
+midi out out
+end
+
+input -> crush_velocity
+crush_velocity -> out
+end
+)pulse" },
+        { "Low Notes Delay",
+            R"pulse(patch low_notes_delay
+
+scale D minor
+tempo 120
+
+midi in input
+  channel 1
+end
+
+split bands
+  by note
+  low below C3
+  mid C3..B4
+  high above B4
+end
+
+delay low_late
+  time 40ms
+end
+
+midi out out
+end
+
+input -> bands
+bands.low -> low_late
+low_late -> out
+bands.mid -> out
+bands.high -> out
+end
+)pulse" },
+        { "Afterimage Smear",
+            R"pulse(patch afterimage_smear
+
+scale D minor
+tempo 120
+
+midi in input
+  channel 1
+end
+
+smear afterimage
+  keep 3 notes
+  weights 0.60 0.25 0.15
+  drift weights 0.05
+end
+
+midi out out
+end
+
+input -> afterimage
+afterimage -> out
+end
+)pulse" }
+    };
+}
+
 juce::MidiMessage eventToMidiMessage(const pulse::Event& event)
 {
     if (event.isNoteOn()) {
@@ -1572,6 +1901,8 @@ void FabricAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     sampleRate_.store(sampleRate);
     blockSize_.store(samplesPerBlock);
+    transportStateKnown_ = false;
+    transportWasPlaying_ = false;
 
     auto state = std::atomic_load(&activeState_);
     if (state != nullptr && state->engine != nullptr) {
@@ -1602,18 +1933,63 @@ void FabricAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     pulse::ProcessContext context;
     context.sampleRate = sampleRate_.load();
     context.blockSize = static_cast<std::uint32_t>(buffer.getNumSamples());
-    context.bpm = 120.0;
-    context.syncToTransport = syncToTransport_.load();
+    context.bpm = state->tempoBpm;
+    std::optional<bool> transportPlaying;
 
-    if (auto* playHead = getPlayHead()) {
-        if (const auto position = playHead->getPosition()) {
-            if (const auto bpm = position->getBpm()) {
-                context.bpm = *bpm;
+    if (followHostTempo_.load()) {
+        if (auto* playHead = getPlayHead()) {
+            if (const auto position = playHead->getPosition()) {
+                if (const auto bpm = position->getBpm()) {
+                    context.bpm = *bpm;
+                }
+                if (pluginTargetsGenerate()) {
+                    transportPlaying = position->getIsPlaying();
+                }
             }
-            if (const auto ppq = position->getPpqPosition()) {
-                context.transportPpq = *ppq;
+        }
+    }
+
+    if (!transportPlaying.has_value() && pluginTargetsGenerate()) {
+        if (auto* playHead = getPlayHead()) {
+            if (const auto position = playHead->getPosition()) {
+                transportPlaying = position->getIsPlaying();
             }
-            context.transportPlaying = position->getIsPlaying();
+        }
+    }
+
+    if (context.bpm <= 0.0) {
+        context.bpm = 120.0;
+    }
+
+    if (pluginTargetsGenerate() && transportPlaying.has_value()) {
+        const auto isPlaying = *transportPlaying;
+        if (!transportStateKnown_) {
+            transportStateKnown_ = true;
+            transportWasPlaying_ = isPlaying;
+        } else if (isPlaying != transportWasPlaying_) {
+            if (!isPlaying) {
+                const auto noteOffs = activeNoteOffEvents(outgoingActiveNotes_);
+                midiMessages.clear();
+                eventsToMidiBuffer(noteOffs, context.sampleRate, static_cast<int>(context.blockSize), midiMessages);
+                outgoingActiveNotes_.fill(0);
+                auto latestState = std::atomic_load(&activeState_);
+                if (latestState != nullptr && latestState->engine != nullptr) {
+                    latestState->engine->reset(context.sampleRate, context.blockSize);
+                }
+                transportWasPlaying_ = false;
+                return;
+            }
+
+            auto latestState = std::atomic_load(&activeState_);
+            if (latestState != nullptr && latestState->engine != nullptr) {
+                latestState->engine->reset(context.sampleRate, context.blockSize);
+            }
+            transportWasPlaying_ = true;
+        }
+
+        if (!isPlaying) {
+            midiMessages.clear();
+            return;
         }
     }
 
@@ -1773,7 +2149,7 @@ void FabricAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
         const juce::ScopedLock lock(uiStateLock_);
         state.setProperty("script", scriptText_, nullptr);
     }
-    state.setProperty("syncToTransport", syncToTransport_.load(), nullptr);
+    state.setProperty("followHostTempo", followHostTempo_.load(), nullptr);
 
     juce::MemoryOutputStream stream(destData, false);
     state.writeToStream(stream);
@@ -1783,7 +2159,10 @@ void FabricAudioProcessor::setStateInformation(const void* data, int sizeInBytes
 {
     juce::MemoryInputStream stream(data, static_cast<size_t>(sizeInBytes), false);
     if (const auto state = juce::ValueTree::readFromStream(stream); state.isValid()) {
-        syncToTransport_.store(static_cast<bool>(state.getProperty("syncToTransport", true)));
+        const auto followHostTempo = state.hasProperty("followHostTempo")
+            ? static_cast<bool>(state.getProperty("followHostTempo"))
+            : static_cast<bool>(state.getProperty("syncToTransport", true));
+        followHostTempo_.store(followHostTempo);
         compileScript(state.getProperty("script", defaultScript()).toString());
         uiRevision_.fetch_add(1);
         return;
@@ -1966,14 +2345,14 @@ FabricAudioProcessor::IoSnapshot FabricAudioProcessor::getIoSnapshot() const
     return ioSnapshot_;
 }
 
-bool FabricAudioProcessor::isSyncToTransportEnabled() const
+bool FabricAudioProcessor::isHostTempoFollowEnabled() const
 {
-    return syncToTransport_.load();
+    return followHostTempo_.load();
 }
 
-void FabricAudioProcessor::setSyncToTransportEnabled(bool enabled)
+void FabricAudioProcessor::setHostTempoFollowEnabled(bool enabled)
 {
-    syncToTransport_.store(enabled);
+    followHostTempo_.store(enabled);
     uiRevision_.fetch_add(1);
 }
 
@@ -2127,6 +2506,18 @@ std::vector<FabricAudioProcessor::NodeIoSnapshot> FabricAudioProcessor::buildNod
     return snapshots;
 }
 
+std::vector<pulse::Event> FabricAudioProcessor::activeNoteOffEvents(const std::array<std::uint8_t, 128>& activeNotes)
+{
+    std::vector<pulse::Event> events;
+    for (std::size_t note = 0; note < activeNotes.size(); ++note) {
+        if (activeNotes[note] == 0) {
+            continue;
+        }
+        events.push_back(pulse::Event::makeNoteOff(static_cast<int>(note), 0, 1, 0.0));
+    }
+    return events;
+}
+
 void FabricAudioProcessor::updateActiveNotes(std::array<std::uint8_t, 128>& activeNotes, const std::vector<pulse::Event>& events)
 {
     for (const auto& event : events) {
@@ -2173,14 +2564,15 @@ void FabricAudioProcessor::requestSectionAdvance(const juce::String& moduleName)
 
 juce::String FabricAudioProcessor::defaultScript()
 {
-    return makeDefaultScript();
+    return pluginTargetsGenerate() ? makeDefaultScript() : makeProcessDefaultScript();
 }
 
 const std::vector<FabricAudioProcessor::FactoryPreset>& FabricAudioProcessor::factoryPresets()
 {
     static const std::vector<FactoryPreset> presets = [] {
+        const auto presetData = pluginTargetsGenerate() ? makeGenerateFactoryPresets() : makeProcessFactoryPresets();
         std::vector<FactoryPreset> result;
-        for (const auto& preset : makeFactoryPresets()) {
+        for (const auto& preset : presetData) {
             result.push_back({ preset.name, preset.script });
         }
         return result;
@@ -3423,6 +3815,7 @@ FabricAudioProcessor::CompileResult FabricAudioProcessor::buildCompileResult(con
     auto engineState = std::make_shared<EngineState>();
     engineState->engine = std::move(nextEngine);
     engineState->graph = graphFromEngine(*engineState->engine);
+    engineState->tempoBpm = extractTempoBpm(scriptText);
 
     if (engineState->engine->graph() != nullptr) {
         for (const auto& node : engineState->engine->graph()->patch().nodes) {

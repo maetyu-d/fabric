@@ -1,4 +1,5 @@
 build/
+JUCE/
 *.DS_Store
 *.app
 *.component

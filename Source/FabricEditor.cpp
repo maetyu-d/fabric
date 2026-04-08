@@ -15,6 +15,42 @@ const auto kAccentSoft = juce::Colour::fromRGBA(201, 110, 46, 60);
 const auto kOutline = juce::Colour::fromRGBA(24, 24, 26, 40);
 constexpr float kEditorFontSize = 18.0f;
 
+bool pluginIsGenerate(const juce::String& pluginName)
+{
+    return pluginName.containsIgnoreCase("generate");
+}
+
+juce::String quickStartTextForPlugin(const juce::String& pluginName)
+{
+    if (pluginIsGenerate(pluginName)) {
+        return R"(quick start
+1. Press play in Logic to start the patch.
+2. Use Tempo: Host to follow Logic BPM or Tempo: Patch to use the script tempo.
+3. Load an example, edit the patch, then click Apply Patch.
+
+good generate modules
+clock
+pattern
+random
+chance
+progression
+notes)";
+    }
+
+    return R"(quick start
+1. Feed MIDI notes into the plugin from a track or keyboard.
+2. Start with Scale Correct or Hold Longer.
+3. Edit the patch, then click Apply Patch.
+
+good process modules
+quantize
+length
+bits
+split
+delay
+smear)";
+}
+
 juce::CodeEditorComponent::ColourScheme makeFabricColourScheme()
 {
     juce::CodeEditorComponent::ColourScheme scheme;
@@ -615,13 +651,17 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
         g.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
         g.drawText("Active notes", keyboardHeader, juce::Justification::centredLeft, true);
         auto strip = keyboard.reduced(0, 6);
+        const auto stripX = static_cast<float>(strip.getX());
+        const auto stripY = static_cast<float>(strip.getY());
+        const auto stripBottom = static_cast<float>(strip.getBottom());
+        const auto stripHeight = static_cast<float>(strip.getHeight());
         const auto keyWidth = static_cast<float>(strip.getWidth()) / 128.0f;
         for (int note = 0; note < 128; ++note) {
             const bool isBlack = juce::MidiMessage::isMidiNoteBlack(note);
-            auto key = juce::Rectangle<float>(strip.getX() + (static_cast<float>(note) * keyWidth),
-                static_cast<float>(strip.getY()),
+            auto key = juce::Rectangle<float>(stripX + (static_cast<float>(note) * keyWidth),
+                stripY,
                 std::max(1.0f, keyWidth - 0.5f),
-                static_cast<float>(strip.getHeight()));
+                stripHeight);
             g.setColour(isBlack ? juce::Colour::fromRGBA(30, 34, 38, 130) : juce::Colour::fromRGBA(255, 255, 255, 55));
             g.fillRoundedRectangle(key, 1.5f);
             const auto velocity = activeNotes[static_cast<std::size_t>(note)];
@@ -632,9 +672,9 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
             }
         }
         for (int note = 0; note < 128; note += 12) {
-            const auto x = strip.getX() + (static_cast<float>(note) * keyWidth);
+            const auto x = stripX + (static_cast<float>(note) * keyWidth);
             g.setColour(juce::Colour::fromRGBA(255, 255, 255, 28));
-            g.drawVerticalLine(static_cast<int>(std::round(x)), static_cast<float>(strip.getY()), static_cast<float>(strip.getBottom()));
+            g.drawVerticalLine(static_cast<int>(std::round(x)), stripY, stripBottom);
         }
 
         area.removeFromTop(10);
@@ -747,7 +787,8 @@ void FabricAudioProcessorEditor::ModulatorInspectorComponent::paint(juce::Graphi
         drawPanel(g, meterArea, juce::Colour::fromRGBA(255, 255, 255, 70), 7.0f);
         auto fill = meterArea.reduced(2, 2);
         const auto normalized = juce::jlimit(0.0f, 1.0f, channel.level);
-        fill.setWidth(static_cast<int>(std::round(fill.getWidth() * normalized)));
+        const auto fillWidth = static_cast<float>(fill.getWidth()) * normalized;
+        fill.setWidth(static_cast<int>(std::round(fillWidth)));
         g.setColour(accent.withAlpha(0.82f));
         g.fillRoundedRectangle(fill.toFloat(), 5.0f);
 
@@ -929,7 +970,7 @@ FabricAudioProcessorEditor::FabricAudioProcessorEditor(FabricAudioProcessor& aud
     , processor_(audioProcessor)
     , tokeniser_(std::make_unique<juce::CPlusPlusCodeTokeniser>())
 {
-    titleLabel_.setText("Fabric", juce::dontSendNotification);
+    titleLabel_.setText(processor_.getName(), juce::dontSendNotification);
     titleLabel_.setColour(juce::Label::textColourId, kInk);
     titleLabel_.setFont(juce::Font(juce::FontOptions(28.0f, juce::Font::bold)));
     addAndMakeVisible(titleLabel_);
@@ -939,7 +980,7 @@ FabricAudioProcessorEditor::FabricAudioProcessorEditor(FabricAudioProcessor& aud
     stateSummaryLabel_.setFont(juce::Font(juce::FontOptions(12.0f)));
     addAndMakeVisible(stateSummaryLabel_);
 
-    tutorialBox_.setTextWhenNothingSelected("Lessons");
+    tutorialBox_.setTextWhenNothingSelected("Examples");
     tutorialBox_.setJustificationType(juce::Justification::centredLeft);
     styleHeaderComboBox(tutorialBox_);
     tutorialBox_.onChange = [this] {
@@ -962,27 +1003,30 @@ FabricAudioProcessorEditor::FabricAudioProcessorEditor(FabricAudioProcessor& aud
     };
     addAndMakeVisible(ioModuleBox_);
 
-    tutorialLoadButton_.setButtonText("Open Lesson");
+    tutorialLoadButton_.setButtonText("Load Example");
     tutorialLoadButton_.onClick = [this] { loadSelectedTutorial(); };
     styleSecondaryButton(tutorialLoadButton_);
     addAndMakeVisible(tutorialLoadButton_);
 
     loadButton_.onClick = [this] { loadPatchFromFile(); };
+    loadButton_.setButtonText("Open Patch");
     styleSecondaryButton(loadButton_);
     addAndMakeVisible(loadButton_);
 
     saveButton_.onClick = [this] { savePatchToFile(); };
+    saveButton_.setButtonText("Save Patch");
     styleSecondaryButton(saveButton_);
     addAndMakeVisible(saveButton_);
 
     clockModeButton_.onClick = [this] {
-        processor_.setSyncToTransportEnabled(!processor_.isSyncToTransportEnabled());
+        processor_.setHostTempoFollowEnabled(!processor_.isHostTempoFollowEnabled());
         refreshFromProcessor();
     };
     styleSecondaryButton(clockModeButton_);
     addAndMakeVisible(clockModeButton_);
 
     compileButton_.onClick = [this] { requestCompileNow(); };
+    compileButton_.setButtonText("Apply Patch");
     stylePrimaryButton(compileButton_);
     addAndMakeVisible(compileButton_);
 
@@ -1018,17 +1062,7 @@ FabricAudioProcessorEditor::FabricAudioProcessorEditor(FabricAudioProcessor& aud
 
     helpSummary_.setMultiLine(true);
     helpSummary_.setReadOnly(true);
-    helpSummary_.setText(R"(bits examples
-status cc
-cc 1..8
-except cc 64
-channel 1
-
-status notes
-note C3..C5
-except note D4
-velocity 90..127
-except velocity 120..127)", juce::dontSendNotification);
+    helpSummary_.setText(quickStartTextForPlugin(processor_.getName()), juce::dontSendNotification);
     helpSummary_.setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
     helpSummary_.setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
     helpSummary_.setColour(juce::TextEditor::textColourId, kMuted.interpolatedWith(juce::Colours::black, 0.12f));
@@ -1476,10 +1510,10 @@ void FabricAudioProcessorEditor::updateTutorialSummary()
     juce::String summary;
     summary << tutorial->name << "\n\n";
     summary << tutorial->summary << "\n\n";
-    summary << "Load Lesson replaces the current patch with this tutorial.\n";
+    summary << "Load Example replaces the current patch with this example.\n";
     summary << "Press Tab to cycle editor -> I/O -> lessons.\n";
     summary << "Click graph nodes to jump to code.\n";
-    summary << "Use the Lessons dropdown in the header to choose a tutorial.\n";
+    summary << "Use the Examples dropdown in the header to choose a patch.\n";
     lessonSummary_.setText(summary, juce::dontSendNotification);
 }
 
@@ -1568,7 +1602,7 @@ void FabricAudioProcessorEditor::refreshFromProcessor()
     const auto summaryText = stateSummaryText();
     stateSummaryLabel_.setVisible(summaryText.isNotEmpty());
     stateSummaryLabel_.setText(summaryText, juce::dontSendNotification);
-    clockModeButton_.setButtonText(processor_.isSyncToTransportEnabled() ? "Logic Sync" : "Free Clock");
+    clockModeButton_.setButtonText(processor_.isHostTempoFollowEnabled() ? "Tempo: Host" : "Tempo: Patch");
 
     if (!diagnostics_.empty()) {
         diagnosticsList_.selectRow(0);
@@ -1811,6 +1845,9 @@ void FabricAudioProcessorEditor::updateStateTracking(const FabricAudioProcessor:
 juce::String FabricAudioProcessorEditor::stateSummaryText() const
 {
     juce::StringArray parts;
+    parts.add(pluginIsGenerate(processor_.getName())
+        ? "Generate mode: starts from the host transport and creates MIDI on its own."
+        : "Process mode: reshape incoming MIDI from the track input.");
     for (const auto& node : graphSnapshot_.nodes) {
         if (node.detail.isEmpty()) {
             continue;

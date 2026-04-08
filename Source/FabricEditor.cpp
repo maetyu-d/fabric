@@ -173,6 +173,11 @@ juce::Colour chipTextColour(juce::Colour base)
     return base.interpolatedWith(juce::Colours::white, 0.28f).withAlpha(0.98f);
 }
 
+juce::Colour roleChipTextColour()
+{
+    return juce::Colours::white.withAlpha(0.98f);
+}
+
 juce::String formatStageNumber(double value, bool suffixMs = false)
 {
     juce::String text;
@@ -563,7 +568,7 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
     auto roleChip = header.removeFromLeft(118).reduced(0, 2);
     g.setColour(chipFillColour(roleAccent).withAlpha(0.95f));
     g.fillRoundedRectangle(roleChip.toFloat(), 10.0f);
-    g.setColour(chipTextColour(roleAccent));
+    g.setColour(roleChipTextColour());
     g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
     g.drawText(roleLabelForPlugin(pluginName), roleChip.reduced(10, 1), juce::Justification::centredLeft, true);
     header.removeFromLeft(10);
@@ -861,7 +866,7 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
     auto roleChip = roleHeader.removeFromLeft(108).reduced(0, 2);
     g.setColour(chipFillColour(roleAccent).withAlpha(0.95f));
     g.fillRoundedRectangle(roleChip.toFloat(), 10.0f);
-    g.setColour(chipTextColour(roleAccent));
+    g.setColour(roleChipTextColour());
     g.setFont(juce::Font(juce::FontOptions(11.5f, juce::Font::bold)));
     g.drawText(roleLabelForPlugin(pluginName), roleChip.reduced(10, 1), juce::Justification::centredLeft, true);
     roleHeader.removeFromLeft(10);

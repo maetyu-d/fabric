@@ -1,5 +1,14 @@
 # Fabric
 
+Fabric is a small, human-readable patch language for building modular MIDI music systems inside JUCE-based MIDI Effect plugins. The project now has three plugin variants, Fabric Generate, Fabric Process, and Fabric Capture (with AU, VST3, and standalone targets - only AU is tested). 
+
+Fabric Generate is primarily for the generation of MIDI data from scratch, Fabric Process is primarily for transforming incoming MIDI, and Fabric Capture enables incoming MIDI to be recorded, exported, and played back. 
+
+extracting motion and structure from MIDI input
+building modulation and control shapes
+connecting together analysers, generators, and processors
+The aim is to make diverse, modular, (mostly) MIDI musical systems as easily (human) readable as possible. There's a handy visuualiser too (press Tab to access).
+
 <img width="1160" height="863" alt="Screenshot 2026-04-17 at 13 26 32" src="https://github.com/user-attachments/assets/0f736031-5435-4e3f-b269-dbf3a1bcddcd" />
 <img width="1160" height="863" alt="Screenshot 2026-04-17 at 13 27 00" src="https://github.com/user-attachments/assets/02686c2d-8a9b-4dfa-ba2b-c9e62a016e63" />
 <img width="1160" height="863" alt="Screenshot 2026-04-17 at 13 27 35" src="https://github.com/user-attachments/assets/e63282de-c8d3-4509-805f-18d46369772f" />

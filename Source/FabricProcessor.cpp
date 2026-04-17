@@ -2367,13 +2367,31 @@ void FabricAudioProcessor::oscMessageReceived(const juce::OSCMessage& message)
     if (address != "/fabric/midi" && address != "/midi") {
         return;
     }
-    if (message.size() < 3 || !message[0].isInt32() || !message[1].isInt32() || !message[2].isInt32()) {
+
+    const auto readOscNumber = [](const juce::OSCArgument& argument) -> std::optional<int> {
+        if (argument.isInt32()) {
+            return argument.getInt32();
+        }
+        if (argument.isFloat32()) {
+            return static_cast<int>(std::lround(argument.getFloat32()));
+        }
+        return std::nullopt;
+    };
+
+    if (message.size() < 3) {
         return;
     }
 
-    const auto status = juce::jlimit(0, 255, message[0].getInt32());
-    const auto data1 = juce::jlimit(0, 127, message[1].getInt32());
-    const auto data2 = juce::jlimit(0, 127, message[2].getInt32());
+    const auto statusValue = readOscNumber(message[0]);
+    const auto data1Value = readOscNumber(message[1]);
+    const auto data2Value = readOscNumber(message[2]);
+    if (!statusValue.has_value() || !data1Value.has_value() || !data2Value.has_value()) {
+        return;
+    }
+
+    const auto status = juce::jlimit(0, 255, *statusValue);
+    const auto data1 = juce::jlimit(0, 127, *data1Value);
+    const auto data2 = juce::jlimit(0, 127, *data2Value);
     const juce::uint8 raw[] {
         static_cast<juce::uint8>(status),
         static_cast<juce::uint8>(data1),

@@ -4,41 +4,25 @@ Fabric is a small, human-readable patch language for building modular MIDI music
 
 Fabric Generate is primarily for the generation of MIDI data from scratch, Fabric Process is primarily for transforming incoming MIDI, Fabric Capture enables incoming MIDI to be recorded, exported, and played back, and Fabric Hub enables MIDI to be sent and received over OSC (from within a MIDI FX plugin). The plugins can be used singularly or in combination, including in combination with any other plugins that send or receive MIDI.
 
-Possibilities include pattern generation, extracting motion and structure from MIDI input, building modulation and control shapes, and connecting together analysers, generators, and processors. The aim is to make diverse, modular, (mostly) MIDI musical systems as easily (human) readable as possible. All plugins feature a handy IO visuualiser too (press Tab to access).
+Possibilities include pattern generation, extracting motion and structure from MIDI input, building modulation and control shapes, and connecting together analysers, generators, and processors. The aim is to make diverse, modular, (mostly) MIDI musical systems as easily (human) readable as possible. All plugins feature a handy IO visualiser too (press Tab to access).
 
 <img width="1160" height="863" alt="Screenshot 2026-04-17 at 13 26 32" src="https://github.com/user-attachments/assets/0f736031-5435-4e3f-b269-dbf3a1bcddcd" />
 <img width="1160" height="863" alt="Screenshot 2026-04-17 at 13 27 00" src="https://github.com/user-attachments/assets/02686c2d-8a9b-4dfa-ba2b-c9e62a016e63" />
 <img width="1160" height="863" alt="Screenshot 2026-04-17 at 13 27 35" src="https://github.com/user-attachments/assets/e63282de-c8d3-4509-805f-18d46369772f" />
 
-
-Fabric is a small, human-readable patch language for building modular MIDI music systems inside JUCE-based MIDI effect plugins. The project now builds two plugin variants, `Fabric Generate` and `Fabric Process` (with VST3, AU, and standalone targets). It is primarily for:
-
-- generating MIDI
-- transforming MIDI
-- extracting motion and structure from MIDI input
-- building modulation and control shapes
-- connecting together analysers, generators, and processors
-
-The aim is to make diverse, modular, (mostly) MIDI musical systems as easily (human) readable as possible. There's a handy visuualiser too (press Tab to access).
-
-
-
 ## Design Goals
 
-Fabric is designed around six goals:
+Fabric is designed around five goals:
 
-1. Be readable by musicians, not just programmers.
-2. Run safely inside a real-time JUCE plugin.
-3. Support both practical MIDI tools and experimental composition systems.
-4. Treat rhythm, pitch, gates, and modulation as first-class signals.
-5. Make modular routing explicit and easy to follow.
-6. Stay small enough to implement without becoming a full general-purpose language.
+1. It should be readable by musicians and other creative humans, not just programmers.
+2. It should support both practical/more mundane MIDI tools and experimental composition systems.
+3. While being flexible as possible within this remit, it should stay small enough to implement without becoming a full general-purpose language.
+4. Make modular routing explicit and easy to follow.
+5. Be based on the JUCE framework for maximum flexibility in terms of platform, format, and reuse.
 
 ## Surface Syntax
 
-Fabric uses short, readable forms for the most common things.
-
-You write:
+Fabric uses short, readable forms for the most common things. For example, you write things like:
 
 ```pulse
 patch first_steps

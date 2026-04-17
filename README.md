@@ -1,6 +1,9 @@
 # Fabric
 
-![](https://github.com/maetyu-d/fabric/blob/main/Screenshot%202026-03-27%20at%2010.40.35.png)
+<img width="1160" height="863" alt="Screenshot 2026-04-17 at 13 26 32" src="https://github.com/user-attachments/assets/0f736031-5435-4e3f-b269-dbf3a1bcddcd" />
+<img width="1160" height="863" alt="Screenshot 2026-04-17 at 13 27 00" src="https://github.com/user-attachments/assets/02686c2d-8a9b-4dfa-ba2b-c9e62a016e63" />
+<img width="1160" height="863" alt="Screenshot 2026-04-17 at 13 27 35" src="https://github.com/user-attachments/assets/e63282de-c8d3-4509-805f-18d46369772f" />
+
 
 Fabric is a small, human-readable patch language for building modular MIDI music systems inside JUCE-based MIDI effect plugins. The project now builds two plugin variants, `Fabric Generate` and `Fabric Process` (with VST3, AU, and standalone targets). It is primarily for:
 
@@ -12,7 +15,7 @@ Fabric is a small, human-readable patch language for building modular MIDI music
 
 The aim is to make diverse, modular, (mostly) MIDI musical systems as easily (human) readable as possible. There's a handy visuualiser too (press Tab to access).
 
-![](https://github.com/maetyu-d/fabric/blob/main/Screenshot%202026-03-27%20at%2010.40.47.png?raw=true)
+
 
 ## Design Goals
 

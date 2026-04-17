@@ -13,6 +13,16 @@
 class FabricAudioProcessor final : public juce::AudioProcessor
 {
 public:
+    enum class CaptureRecordStyle {
+        manual,
+        automatic
+    };
+
+    enum class CaptureMode {
+        passThroughRecord,
+        playbackCaptured
+    };
+
     enum class NodeProcessingMode {
         normal,
         bypass,
@@ -111,6 +121,18 @@ public:
         juce::String script;
     };
 
+    struct CaptureStatus {
+        CaptureMode mode = CaptureMode::passThroughRecord;
+        CaptureRecordStyle recordStyle = CaptureRecordStyle::manual;
+        bool isRecording = false;
+        bool hasCapture = false;
+        int eventCount = 0;
+        int noteEventCount = 0;
+        double lengthSeconds = 0.0;
+        double recordingSeconds = 0.0;
+        double exportTempoBpm = 120.0;
+    };
+
     FabricAudioProcessor();
     ~FabricAudioProcessor() override;
 
@@ -152,6 +174,15 @@ public:
     IoSnapshot getIoSnapshot() const;
     bool isHostTempoFollowEnabled() const;
     void setHostTempoFollowEnabled(bool enabled);
+    CaptureStatus getCaptureStatus() const;
+    CaptureMode getCaptureMode() const;
+    void setCaptureMode(CaptureMode mode);
+    CaptureRecordStyle getCaptureRecordStyle() const;
+    void setCaptureRecordStyle(CaptureRecordStyle style);
+    void startCaptureRecording();
+    void stopCaptureRecording();
+    void clearCapturedMidi();
+    bool exportCapturedMidiFile(const juce::File& targetFile) const;
     std::uint64_t getUiRevision() const;
     bool isCompileInProgress() const;
     void requestSectionRecall(const juce::String& moduleName, int sectionIndex);
@@ -194,13 +225,16 @@ private:
     static IoEventSummary summariseEvent(const pulse::Event& event);
     static IoSnapshot buildIoSnapshot(const std::vector<pulse::Event>& incoming, const std::vector<pulse::Event>& outgoing);
     static std::vector<NodeIoSnapshot> buildNodeIoSnapshots(const pulse::Engine& engine);
+    static juce::MidiMessage midiMessageFromEvent(const pulse::Event& event);
     static std::vector<pulse::Event> activeNoteOffEvents(const std::array<std::uint8_t, 128>& activeNotes);
     static void updateActiveNotes(std::array<std::uint8_t, 128>& activeNotes, const std::vector<pulse::Event>& events);
     static void pushHistory(std::array<std::uint8_t, 32>& history, int count);
     static int countActiveNotes(const std::array<std::uint8_t, 128>& activeNotes);
+    void processCaptureBlock(juce::MidiBuffer& midiMessages, double sampleRate, int blockSize);
 
     juce::CriticalSection uiStateLock_;
     mutable juce::SpinLock ioSnapshotLock_;
+    mutable juce::CriticalSection captureStateLock_;
     juce::ThreadPool compilePool_ { 1 };
     std::shared_ptr<EngineState> activeState_;
     juce::String scriptText_;
@@ -227,6 +261,18 @@ private:
     std::array<std::uint8_t, 32> outgoingHistory_ {};
     IoSnapshot ioSnapshot_;
     std::optional<int> currentProgramIndex_;
+    std::atomic<CaptureMode> captureMode_ { CaptureMode::passThroughRecord };
+    std::atomic<CaptureRecordStyle> captureRecordStyle_ { CaptureRecordStyle::manual };
+    std::atomic<bool> captureRecordingEnabled_ { false };
+    std::vector<pulse::Event> capturedMidiEvents_;
+    double capturedMidiLengthSeconds_ = 0.0;
+    double captureTimelineSeconds_ = 0.0;
+    double capturePlaybackCursorSeconds_ = 0.0;
+    double captureExportTempoBpm_ = 120.0;
+    std::optional<double> captureStartSeconds_;
+    double captureRecordStartSeconds_ = 0.0;
+    std::atomic<double> captureRecordingSeconds_ { 0.0 };
+    std::atomic<bool> captureNeedsFlush_ { false };
     bool transportStateKnown_ = false;
     bool transportWasPlaying_ = false;
 

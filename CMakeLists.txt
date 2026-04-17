@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(Fabric VERSION 0.2.5 LANGUAGES C CXX)
+project(Fabric VERSION 0.2.6 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -100,3 +100,4 @@ endfunction()
 
 add_fabric_plugin(FabricGeneratePlugin "space.matd.fabric.generate" FbGn "Fabric Generate" FABRIC_PLUGIN_MODE_GENERATE)
 add_fabric_plugin(FabricProcessPlugin "space.matd.fabric.process" FbPr "Fabric Process" FABRIC_PLUGIN_MODE_PROCESS)
+add_fabric_plugin(FabricCapturePlugin "space.matd.fabric.capture" FbCp "Fabric Capture" FABRIC_PLUGIN_MODE_CAPTURE)

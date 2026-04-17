@@ -7,6 +7,7 @@ const auto kPanel = juce::Colour::fromRGB(233, 226, 214);
 const auto kPanelStrong = juce::Colour::fromRGB(222, 214, 202);
 const auto kInk = juce::Colour::fromRGB(36, 38, 41);
 const auto kMuted = juce::Colour::fromRGB(110, 107, 100);
+const auto kHelpInk = juce::Colour::fromRGB(58, 56, 50);
 const auto kCodeBg = juce::Colour::fromRGB(28, 34, 39);
 const auto kCodeGutter = juce::Colour::fromRGB(34, 41, 46);
 const auto kCodeText = juce::Colour::fromRGB(222, 225, 219);
@@ -18,6 +19,11 @@ constexpr float kEditorFontSize = 18.0f;
 bool pluginIsGenerate(const juce::String& pluginName)
 {
     return pluginName.containsIgnoreCase("generate");
+}
+
+bool pluginIsCapture(const juce::String& pluginName)
+{
+    return pluginName.containsIgnoreCase("capture");
 }
 
 juce::String quickStartTextForPlugin(const juce::String& pluginName)
@@ -37,6 +43,21 @@ progression
 notes)";
     }
 
+    if (pluginIsCapture(pluginName)) {
+        return R"(Quick Start
+1. Choose Record Style: Manual or Auto.
+2. In Record mode, Manual uses Start/Stop Recording. Auto records as soon as MIDI arrives.
+3. Switch to Playback mode to stop the live thru and loop the captured phrase.
+4. Use Export Current Take to write the captured take as a .mid file.
+
+Capture Controls
+Record: pass live MIDI through.
+Playback: ignore live input and loop the captured take.
+Manual: explicit Start/Stop controls for each take.
+Auto: the old behavior, recording while the plugin stays in Record mode.
+Clear Take: erase the current capture.)";
+    }
+
     return R"(Quick Start
 1. Send MIDI notes into the plugin from a track or keyboard.
 2. Start with Scale Correct or Hold Longer.
@@ -53,6 +74,9 @@ smear)";
 
 juce::Colour roleAccentForPlugin(const juce::String& pluginName)
 {
+    if (pluginIsCapture(pluginName)) {
+        return juce::Colour::fromRGB(52, 146, 102);
+    }
     return pluginIsGenerate(pluginName)
         ? juce::Colour::fromRGB(208, 126, 42)
         : juce::Colour::fromRGB(62, 122, 196);
@@ -60,6 +84,9 @@ juce::Colour roleAccentForPlugin(const juce::String& pluginName)
 
 juce::String roleLabelForPlugin(const juce::String& pluginName)
 {
+    if (pluginIsCapture(pluginName)) {
+        return "CAPTURE";
+    }
     return pluginIsGenerate(pluginName) ? "GENERATE" : "PROCESS";
 }
 
@@ -559,6 +586,7 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
     const auto pluginName = owner_.processor_.getName();
     const auto roleAccent = roleAccentForPlugin(pluginName);
     const auto isGenerate = pluginIsGenerate(pluginName);
+    const auto isCapture = pluginIsCapture(pluginName);
 
     auto bounds = getLocalBounds().reduced(8);
     drawPanel(g, bounds, kPanelStrong, 24.0f);
@@ -574,7 +602,10 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
     header.removeFromLeft(10);
     g.setColour(kMuted.withAlpha(0.95f));
     g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
-    g.drawText(isGenerate ? "TRANSPORT + OUTPUT" : "INPUT + OUTPUT", header.removeFromLeft(160), juce::Justification::centredLeft, true);
+    g.drawText(isGenerate ? "TRANSPORT + OUTPUT" : isCapture ? "CAPTURE + OUTPUT" : "INPUT + OUTPUT",
+        header.removeFromLeft(160),
+        juce::Justification::centredLeft,
+        true);
     g.setFont(juce::Font(juce::FontOptions(12.0f)));
     juce::String focusName = "Whole Patch";
     if (owner_.selectedIoModuleName_.isNotEmpty()) {
@@ -739,10 +770,10 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
         }
     };
 
-    const auto leftTitle = isGenerate ? "Transport / Start-Stop" : "Incoming MIDI";
-    const auto rightTitle = isGenerate ? "Generated MIDI" : "Processed MIDI";
-    const auto leftAccent = isGenerate ? roleAccent.brighter(0.05f) : familyColour("input");
-    const auto rightAccent = isGenerate ? familyColour("generate") : familyColour("output");
+    const auto leftTitle = isGenerate ? "Transport / Start-Stop" : isCapture ? "Incoming MIDI" : "Incoming MIDI";
+    const auto rightTitle = isGenerate ? "Generated MIDI" : isCapture ? "Captured / Output" : "Processed MIDI";
+    const auto leftAccent = isGenerate ? roleAccent.brighter(0.05f) : isCapture ? familyColour("input") : familyColour("input");
+    const auto rightAccent = isGenerate ? familyColour("generate") : isCapture ? roleAccent : familyColour("output");
     drawLane(left, leftTitle, snapshot.incomingCount, snapshot.incomingActiveCount, snapshot.incomingHistory, snapshot.incomingActive, snapshot.incoming, leftAccent);
     drawLane(right, rightTitle, snapshot.outgoingCount, snapshot.outgoingActiveCount, snapshot.outgoingHistory, snapshot.outgoingActive, snapshot.outgoing, rightAccent);
 }
@@ -850,6 +881,7 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
     const auto pluginName = owner_.processor_.getName();
     const auto roleAccent = roleAccentForPlugin(pluginName);
     const auto isGenerate = pluginIsGenerate(pluginName);
+    const auto isCapture = pluginIsCapture(pluginName);
 
     auto bounds = getLocalBounds().reduced(8);
     drawPanel(g, bounds, kPanel, 22.0f);
@@ -872,7 +904,10 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
     roleHeader.removeFromLeft(10);
     g.setColour(kMuted.withAlpha(0.95f));
     g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
-    g.drawText(isGenerate ? "Generate Signal Flow" : "Process Signal Flow", roleHeader.removeFromLeft(190), juce::Justification::centredLeft, true);
+    g.drawText(isGenerate ? "Generate Signal Flow" : isCapture ? "Capture Signal Flow" : "Process Signal Flow",
+        roleHeader.removeFromLeft(190),
+        juce::Justification::centredLeft,
+        true);
     bounds.removeFromTop(6);
 
     struct ViewNode {
@@ -1077,6 +1112,52 @@ FabricAudioProcessorEditor::FabricAudioProcessorEditor(FabricAudioProcessor& aud
     styleSecondaryButton(clockModeButton_);
     addAndMakeVisible(clockModeButton_);
 
+    captureModeButton_.onClick = [this] {
+        const auto nextMode = processor_.getCaptureMode() == FabricAudioProcessor::CaptureMode::passThroughRecord
+            ? FabricAudioProcessor::CaptureMode::playbackCaptured
+            : FabricAudioProcessor::CaptureMode::passThroughRecord;
+        processor_.setCaptureMode(nextMode);
+        refreshFromProcessor();
+    };
+    styleSecondaryButton(captureModeButton_);
+    addAndMakeVisible(captureModeButton_);
+
+    captureRecordStyleButton_.onClick = [this] {
+        const auto nextStyle = processor_.getCaptureRecordStyle() == FabricAudioProcessor::CaptureRecordStyle::manual
+            ? FabricAudioProcessor::CaptureRecordStyle::automatic
+            : FabricAudioProcessor::CaptureRecordStyle::manual;
+        processor_.setCaptureRecordStyle(nextStyle);
+        refreshFromProcessor();
+    };
+    styleSecondaryButton(captureRecordStyleButton_);
+    addAndMakeVisible(captureRecordStyleButton_);
+
+    startCaptureButton_.onClick = [this] {
+        processor_.startCaptureRecording();
+        refreshFromProcessor();
+    };
+    stylePrimaryButton(startCaptureButton_);
+    addAndMakeVisible(startCaptureButton_);
+
+    stopCaptureButton_.onClick = [this] {
+        processor_.stopCaptureRecording();
+        refreshFromProcessor();
+    };
+    styleSecondaryButton(stopCaptureButton_);
+    addAndMakeVisible(stopCaptureButton_);
+
+    clearCaptureButton_.onClick = [this] {
+        processor_.clearCapturedMidi();
+        refreshFromProcessor();
+    };
+    styleSecondaryButton(clearCaptureButton_);
+    addAndMakeVisible(clearCaptureButton_);
+
+    exportCaptureButton_.onClick = [this] { exportCapturedMidiToFile(); };
+    exportCaptureButton_.setButtonText("Export Current Take");
+    styleSecondaryButton(exportCaptureButton_);
+    addAndMakeVisible(exportCaptureButton_);
+
     compileButton_.onClick = [this] { requestCompileNow(); };
     compileButton_.setButtonText("Apply Patch");
     stylePrimaryButton(compileButton_);
@@ -1117,7 +1198,7 @@ FabricAudioProcessorEditor::FabricAudioProcessorEditor(FabricAudioProcessor& aud
     helpSummary_.setText(quickStartTextForPlugin(processor_.getName()), juce::dontSendNotification);
     helpSummary_.setColour(juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
     helpSummary_.setColour(juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
-    helpSummary_.setColour(juce::TextEditor::textColourId, kMuted.interpolatedWith(juce::Colours::black, 0.12f));
+    helpSummary_.setColour(juce::TextEditor::textColourId, kHelpInk);
     helpSummary_.setFont(juce::Font(juce::FontOptions("Menlo", 12.5f, juce::Font::plain)));
     addAndMakeVisible(helpSummary_);
 
@@ -1222,6 +1303,12 @@ FabricAudioProcessorEditor::FabricAudioProcessorEditor(FabricAudioProcessor& aud
     tutorialLoadButton_.addKeyListener(this);
     compileButton_.addKeyListener(this);
     clockModeButton_.addKeyListener(this);
+    captureModeButton_.addKeyListener(this);
+    captureRecordStyleButton_.addKeyListener(this);
+    startCaptureButton_.addKeyListener(this);
+    stopCaptureButton_.addKeyListener(this);
+    clearCaptureButton_.addKeyListener(this);
+    exportCaptureButton_.addKeyListener(this);
     loadButton_.addKeyListener(this);
     saveButton_.addKeyListener(this);
 
@@ -1264,8 +1351,13 @@ void FabricAudioProcessorEditor::paint(juce::Graphics& g)
 
         g.setColour(kMuted);
         g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
-        g.drawText("PATCH", layout.editorPanel.withTrimmedBottom(layout.editorPanel.getHeight() - 26).reduced(16, 0), juce::Justification::centredLeft, true);
-        g.drawText(pluginIsGenerate(processor_.getName()) ? "GENERATOR FLOW" : "PROCESSOR FLOW",
+        g.drawText(pluginIsCapture(processor_.getName()) ? "CAPTURE SETUP" : "PATCH",
+            layout.editorPanel.withTrimmedBottom(layout.editorPanel.getHeight() - 26).reduced(16, 0),
+            juce::Justification::centredLeft,
+            true);
+        g.drawText(pluginIsGenerate(processor_.getName()) ? "GENERATOR FLOW"
+                    : pluginIsCapture(processor_.getName()) ? "CAPTURE FLOW"
+                                                           : "PROCESSOR FLOW",
             layout.graphPanel.withTrimmedBottom(layout.graphPanel.getHeight() - 26).reduced(16, 0),
             juce::Justification::centredLeft,
             true);
@@ -1287,6 +1379,7 @@ void FabricAudioProcessorEditor::resized()
     auto header = layout.headerPanel.reduced(22, 14);
     const auto controlHeight = 40;
     titleLabel_.setBounds(header.removeFromLeft(168));
+    const auto isCapture = pluginIsCapture(processor_.getName());
 
     auto controls = header.removeFromRight(804);
     controls = controls.withTrimmedTop((controls.getHeight() - controlHeight) / 2).withHeight(controlHeight);
@@ -1296,6 +1389,10 @@ void FabricAudioProcessorEditor::resized()
         controls.removeFromLeft(14);
         tutorialBox_.setBounds({});
         tutorialLoadButton_.setBounds({});
+    } else if (isCapture) {
+        tutorialBox_.setBounds({});
+        tutorialLoadButton_.setBounds({});
+        ioModuleBox_.setBounds({});
     } else {
         tutorialBox_.setBounds(controls.removeFromLeft(224));
         controls.removeFromLeft(10);
@@ -1303,13 +1400,37 @@ void FabricAudioProcessorEditor::resized()
         controls.removeFromLeft(14);
         ioModuleBox_.setBounds({});
     }
-    loadButton_.setBounds(controls.removeFromLeft(82));
-    controls.removeFromLeft(8);
-    saveButton_.setBounds(controls.removeFromLeft(82));
-    controls.removeFromLeft(14);
-    clockModeButton_.setBounds(controls.removeFromLeft(156));
-    controls.removeFromLeft(12);
-    compileButton_.setBounds(controls.removeFromLeft(170));
+    if (isCapture) {
+        loadButton_.setBounds({});
+        saveButton_.setBounds({});
+        captureModeButton_.setBounds(controls.removeFromLeft(126));
+        controls.removeFromLeft(8);
+        captureRecordStyleButton_.setBounds(controls.removeFromLeft(122));
+        controls.removeFromLeft(8);
+        startCaptureButton_.setBounds(controls.removeFromLeft(136));
+        controls.removeFromLeft(8);
+        stopCaptureButton_.setBounds(controls.removeFromLeft(126));
+        controls.removeFromLeft(8);
+        clearCaptureButton_.setBounds(controls.removeFromLeft(104));
+        controls.removeFromLeft(8);
+        exportCaptureButton_.setBounds(controls.removeFromLeft(112));
+        clockModeButton_.setBounds({});
+        compileButton_.setBounds({});
+    } else {
+        loadButton_.setBounds(controls.removeFromLeft(82));
+        controls.removeFromLeft(8);
+        saveButton_.setBounds(controls.removeFromLeft(82));
+        controls.removeFromLeft(14);
+        captureModeButton_.setBounds({});
+        captureRecordStyleButton_.setBounds({});
+        startCaptureButton_.setBounds({});
+        stopCaptureButton_.setBounds({});
+        clearCaptureButton_.setBounds({});
+        exportCaptureButton_.setBounds({});
+        clockModeButton_.setBounds(controls.removeFromLeft(156));
+        controls.removeFromLeft(12);
+        compileButton_.setBounds(controls.removeFromLeft(170));
+    }
 
     if (stateSummaryLabel_.isVisible()) {
         auto summary = header.reduced(10, 8);
@@ -1441,6 +1562,10 @@ void FabricAudioProcessorEditor::timerCallback()
         }
         if (needsRepaint) {
             sectionPulseOverlay_.repaint();
+        }
+        if (pluginIsCapture(processor_.getName())) {
+            stateSummaryLabel_.setText(stateSummaryText(), juce::dontSendNotification);
+            refreshCaptureControls();
         }
     }
 }
@@ -1592,6 +1717,7 @@ void FabricAudioProcessorEditor::setGraphScope(const juce::String& scope)
 
 void FabricAudioProcessorEditor::refreshFromProcessor()
 {
+    refreshCaptureControls();
     seenRevision_ = processor_.getUiRevision();
     const auto latestScript = processor_.getScriptText();
     for (int index = 0; index < tutorialNames_.size(); ++index) {
@@ -1658,6 +1784,7 @@ void FabricAudioProcessorEditor::refreshFromProcessor()
     stateSummaryLabel_.setVisible(summaryText.isNotEmpty());
     stateSummaryLabel_.setText(summaryText, juce::dontSendNotification);
     clockModeButton_.setButtonText(processor_.isHostTempoFollowEnabled() ? "Tempo: Host" : "Tempo: Patch");
+    refreshCaptureControls();
 
     if (!diagnostics_.empty()) {
         diagnosticsList_.selectRow(0);
@@ -1671,11 +1798,12 @@ void FabricAudioProcessorEditor::applyViewMode()
     const auto showingEditor = viewMode_ == ViewMode::editor;
     const auto showingIo = viewMode_ == ViewMode::io;
     const auto showingLessons = viewMode_ == ViewMode::lessons;
+    const auto isCapture = pluginIsCapture(processor_.getName());
     if (editor_ != nullptr) {
         editor_->setVisible(showingEditor);
     }
-    tutorialBox_.setVisible(!showingIo);
-    tutorialLoadButton_.setVisible(!showingIo);
+    tutorialBox_.setVisible(!showingIo && !isCapture);
+    tutorialLoadButton_.setVisible(!showingIo && !isCapture);
     ioModuleBox_.setVisible(showingIo);
     graphViewport_.setVisible(showingEditor);
     diagnosticsList_.setVisible(showingEditor && !diagnostics_.empty());
@@ -1693,11 +1821,28 @@ void FabricAudioProcessorEditor::applyViewMode()
     stageOverlapSlider_.setVisible(showingStageEditor);
     stageCurveBox_.setVisible(showingStageEditor);
     ioVisualiser_.setVisible(showingIo);
-    lessonSummary_.setVisible(showingLessons);
+    lessonSummary_.setVisible(showingLessons && !isCapture);
+    loadButton_.setVisible(!isCapture);
+    saveButton_.setVisible(!isCapture);
+    clockModeButton_.setVisible(!isCapture);
+    compileButton_.setVisible(!isCapture);
+    captureModeButton_.setVisible(isCapture);
+    captureRecordStyleButton_.setVisible(isCapture);
+    startCaptureButton_.setVisible(isCapture);
+    stopCaptureButton_.setVisible(isCapture);
+    clearCaptureButton_.setVisible(isCapture);
+    exportCaptureButton_.setVisible(isCapture);
 }
 
 void FabricAudioProcessorEditor::toggleViewMode()
 {
+    if (pluginIsCapture(processor_.getName())) {
+        viewMode_ = (viewMode_ == ViewMode::editor) ? ViewMode::io : ViewMode::editor;
+        applyViewMode();
+        repaint();
+        return;
+    }
+
     switch (viewMode_) {
     case ViewMode::editor:
         viewMode_ = ViewMode::io;
@@ -1756,6 +1901,62 @@ void FabricAudioProcessorEditor::savePatchToFile()
                 lastPatchFile_ = file;
             }
         });
+}
+
+void FabricAudioProcessorEditor::exportCapturedMidiToFile()
+{
+    auto startFile = lastMidiExportFile_.exists()
+        ? lastMidiExportFile_
+        : juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile("fabric-capture.mid");
+    fileChooser_ = std::make_unique<juce::FileChooser>("Export captured MIDI", startFile, "*.mid");
+    fileChooser_->launchAsync(juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::canSelectFiles | juce::FileBrowserComponent::warnAboutOverwriting,
+        [this](const juce::FileChooser& chooser) {
+            auto file = chooser.getResult();
+            if (file == juce::File()) {
+                return;
+            }
+            if (!file.hasFileExtension(".mid")) {
+                file = file.withFileExtension(".mid");
+            }
+
+            if (processor_.exportCapturedMidiFile(file)) {
+                lastMidiExportFile_ = file;
+            }
+        });
+}
+
+void FabricAudioProcessorEditor::refreshCaptureControls()
+{
+    if (!pluginIsCapture(processor_.getName())) {
+        return;
+    }
+
+    const auto capture = processor_.getCaptureStatus();
+    captureModeButton_.setButtonText(capture.mode == FabricAudioProcessor::CaptureMode::passThroughRecord
+        ? "Output: Live"
+        : "Output: Playback");
+    captureRecordStyleButton_.setButtonText(capture.recordStyle == FabricAudioProcessor::CaptureRecordStyle::manual
+        ? "Record: Manual"
+        : "Record: Auto");
+    const auto manualStyle = capture.recordStyle == FabricAudioProcessor::CaptureRecordStyle::manual;
+    startCaptureButton_.setEnabled(manualStyle && capture.mode == FabricAudioProcessor::CaptureMode::passThroughRecord && !capture.isRecording);
+    stopCaptureButton_.setEnabled(manualStyle && capture.mode == FabricAudioProcessor::CaptureMode::passThroughRecord && capture.isRecording);
+    clearCaptureButton_.setEnabled(capture.hasCapture);
+    exportCaptureButton_.setEnabled(capture.hasCapture);
+    exportCaptureButton_.setButtonText(capture.hasCapture ? "Export Current Take" : "No Take To Export");
+
+    if (capture.isRecording) {
+        startCaptureButton_.setButtonText("Recording...");
+        stopCaptureButton_.setButtonText("Stop Recording");
+        stateSummaryLabel_.setColour(juce::Label::textColourId, juce::Colour::fromRGB(178, 61, 48));
+    } else {
+        startCaptureButton_.setButtonText("Start Recording");
+        stopCaptureButton_.setButtonText("Stop Recording");
+        stateSummaryLabel_.setColour(juce::Label::textColourId, kMuted.withAlpha(0.95f));
+    }
+
+    startCaptureButton_.setVisible(manualStyle);
+    stopCaptureButton_.setVisible(manualStyle);
 }
 
 void FabricAudioProcessorEditor::jumpToDiagnostic(int row)
@@ -1900,6 +2101,31 @@ void FabricAudioProcessorEditor::updateStateTracking(const FabricAudioProcessor:
 juce::String FabricAudioProcessorEditor::stateSummaryText() const
 {
     juce::StringArray parts;
+    if (pluginIsCapture(processor_.getName())) {
+        const auto capture = processor_.getCaptureStatus();
+        if (capture.mode == FabricAudioProcessor::CaptureMode::passThroughRecord) {
+            if (capture.recordStyle == FabricAudioProcessor::CaptureRecordStyle::automatic) {
+                parts.add(capture.isRecording
+                    ? "Auto record: live MIDI is passing through and the take has been rolling for "
+                        + juce::String(capture.recordingSeconds, 1) + "s."
+                    : "Auto record: stay in Record mode and play MIDI to keep capturing automatically.");
+            } else {
+                parts.add(capture.isRecording
+                    ? "Recording now: live MIDI is passing through and this take has been rolling for "
+                        + juce::String(capture.recordingSeconds, 1) + "s."
+                    : "Manual record: live MIDI passes through. Press Start Recording to capture a fresh take.");
+            }
+        } else {
+            parts.add("Playback mode: ignore live MIDI and loop the captured take.");
+        }
+        parts.add(capture.hasCapture
+            ? "Take ready: " + juce::String(capture.eventCount) + " events, "
+                + juce::String(capture.noteEventCount) + " note events, "
+                + juce::String(capture.lengthSeconds, 2) + "s."
+            : "Take status: no captured MIDI yet.");
+        return parts.joinIntoString("   ");
+    }
+
     parts.add(pluginIsGenerate(processor_.getName())
         ? "Generate mode: starts from the host transport and creates MIDI on its own."
         : "Process mode: reshape incoming MIDI from the track input.");

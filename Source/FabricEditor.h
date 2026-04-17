@@ -145,11 +145,13 @@ private:
     void toggleViewMode();
     void loadPatchFromFile();
     void savePatchToFile();
+    void exportCapturedMidiToFile();
     void rebuildTutorialBrowser();
     void rebuildIoModuleBrowser();
     void updateTutorialSummary();
     void loadSelectedTutorial();
     void setGraphScope(const juce::String& scope);
+    void refreshCaptureControls();
 
     FabricAudioProcessor& processor_;
     juce::Label titleLabel_;
@@ -160,6 +162,12 @@ private:
     juce::TextButton loadButton_ { "Load" };
     juce::TextButton saveButton_ { "Save" };
     juce::TextButton clockModeButton_;
+    juce::TextButton captureModeButton_;
+    juce::TextButton captureRecordStyleButton_;
+    juce::TextButton startCaptureButton_ { "Start Recording" };
+    juce::TextButton stopCaptureButton_ { "Stop Recording" };
+    juce::TextButton clearCaptureButton_ { "Clear Take" };
+    juce::TextButton exportCaptureButton_ { "Export MIDI" };
     juce::TextButton compileButton_ { "Recompile" };
     juce::CodeDocument document_;
     std::unique_ptr<juce::CodeTokeniser> tokeniser_;
@@ -209,6 +217,7 @@ private:
     juce::String graphScopePrefix_;
     std::unique_ptr<juce::FileChooser> fileChooser_;
     juce::File lastPatchFile_;
+    juce::File lastMidiExportFile_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FabricAudioProcessorEditor)
 };

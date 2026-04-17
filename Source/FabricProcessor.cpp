@@ -1,6 +1,7 @@
 #include "FabricProcessor.h"
 #include "FabricEditor.h"
 
+#include <cmath>
 #include <utility>
 
 namespace {
@@ -30,10 +31,19 @@ struct FactoryPresetData {
 
 constexpr bool pluginTargetsGenerate()
 {
-#if defined(FABRIC_PLUGIN_MODE_PROCESS)
-    return false;
-#else
+#if defined(FABRIC_PLUGIN_MODE_GENERATE)
     return true;
+#else
+    return false;
+#endif
+}
+
+constexpr bool pluginTargetsCapture()
+{
+#if defined(FABRIC_PLUGIN_MODE_CAPTURE)
+    return true;
+#else
+    return false;
 #endif
 }
 
@@ -112,6 +122,22 @@ end
 
 input -> correct_pitch
 correct_pitch -> out
+end
+)pulse";
+}
+
+juce::String makeCaptureDefaultScript()
+{
+    return R"pulse(patch fabric_capture_default
+
+midi in input
+  channel 1
+end
+
+midi out out
+end
+
+input -> out
 end
 )pulse";
 }
@@ -1903,6 +1929,18 @@ void FabricAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     blockSize_.store(samplesPerBlock);
     transportStateKnown_ = false;
     transportWasPlaying_ = false;
+    {
+        const juce::ScopedLock lock(captureStateLock_);
+        captureTimelineSeconds_ = capturedMidiLengthSeconds_;
+        if (!capturedMidiEvents_.empty()) {
+            captureStartSeconds_ = 0.0;
+        }
+    }
+    capturePlaybackCursorSeconds_ = 0.0;
+    captureRecordingSeconds_.store(captureRecordingEnabled_.load()
+        ? juce::jmax(0.0, captureTimelineSeconds_ - captureRecordStartSeconds_)
+        : 0.0);
+    captureNeedsFlush_.store(true);
 
     auto state = std::atomic_load(&activeState_);
     if (state != nullptr && state->engine != nullptr) {
@@ -1923,6 +1961,11 @@ void FabricAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
 {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
+
+    if (pluginTargetsCapture()) {
+        processCaptureBlock(midiMessages, sampleRate_.load(), buffer.getNumSamples());
+        return;
+    }
 
     auto state = std::atomic_load(&activeState_);
     if (state == nullptr || state->engine == nullptr) {
@@ -2073,6 +2116,131 @@ void FabricAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     eventsToMidiBuffer(rendered, context.sampleRate, static_cast<int>(context.blockSize), midiMessages);
 }
 
+void FabricAudioProcessor::processCaptureBlock(juce::MidiBuffer& midiMessages, double sampleRate, int blockSize)
+{
+    const auto blockDuration = (sampleRate > 1.0) ? static_cast<double>(blockSize) / sampleRate : 0.0;
+    auto incomingEvents = midiBufferToEvents(midiMessages);
+    midiMessages.clear();
+    std::vector<pulse::Event> flushedNoteOffs;
+
+    if (captureNeedsFlush_.exchange(false)) {
+        flushedNoteOffs = activeNoteOffEvents(outgoingActiveNotes_);
+        outgoingActiveNotes_.fill(0);
+        capturePlaybackCursorSeconds_ = 0.0;
+    }
+
+    if (auto* playHead = getPlayHead()) {
+        if (const auto position = playHead->getPosition()) {
+            if (const auto bpm = position->getBpm()) {
+                if (*bpm > 0.0) {
+                captureExportTempoBpm_ = *bpm;
+                }
+            }
+        }
+    }
+
+    std::vector<pulse::Event> rendered;
+    const auto captureMode = captureMode_.load();
+
+    if (captureMode == CaptureMode::passThroughRecord) {
+        const auto shouldAutoRecord = captureRecordStyle_.load() == CaptureRecordStyle::automatic;
+        if (shouldAutoRecord && !captureRecordingEnabled_.load()) {
+            captureRecordingEnabled_.store(true);
+            {
+                const juce::ScopedLock lock(captureStateLock_);
+                captureRecordStartSeconds_ = captureTimelineSeconds_;
+            }
+            captureRecordingSeconds_.store(0.0);
+        }
+        rendered = incomingEvents;
+
+        if (captureRecordingEnabled_.load() && !incomingEvents.empty()) {
+            const juce::ScopedLock lock(captureStateLock_);
+            for (auto event : incomingEvents) {
+                event.time = (sampleRate > 1.0) ? event.time / sampleRate : 0.0;
+                const auto absoluteTime = captureTimelineSeconds_ + event.time;
+                if (!captureStartSeconds_.has_value()) {
+                    captureStartSeconds_ = absoluteTime;
+                }
+                event.time = juce::jmax(0.0, absoluteTime - *captureStartSeconds_);
+                capturedMidiLengthSeconds_ = juce::jmax(capturedMidiLengthSeconds_, event.time);
+                capturedMidiEvents_.push_back(std::move(event));
+            }
+
+            std::sort(capturedMidiEvents_.begin(), capturedMidiEvents_.end(), [](const auto& left, const auto& right) {
+                if (std::abs(left.time - right.time) > 1.0e-9) {
+                    return left.time < right.time;
+                }
+                return left.noteNumber() < right.noteNumber();
+            });
+            uiRevision_.fetch_add(1);
+        }
+    } else {
+        std::vector<pulse::Event> clip;
+        double clipLength = 0.0;
+        {
+            const juce::ScopedLock lock(captureStateLock_);
+            clip = capturedMidiEvents_;
+            clipLength = capturedMidiLengthSeconds_;
+        }
+
+        if (!clip.empty() && clipLength > 0.0) {
+            const auto startTime = capturePlaybackCursorSeconds_;
+            const auto endTime = startTime + blockDuration;
+            const auto firstLoop = static_cast<int>(std::floor(startTime / clipLength));
+            const auto lastLoop = static_cast<int>(std::floor((juce::jmax(startTime, endTime - 1.0e-9)) / clipLength));
+
+            for (int loopIndex = firstLoop; loopIndex <= lastLoop; ++loopIndex) {
+                const auto loopBase = static_cast<double>(loopIndex) * clipLength;
+                for (const auto& event : clip) {
+                    const auto absoluteEventTime = loopBase + event.time;
+                    if (absoluteEventTime + 1.0e-9 < startTime || absoluteEventTime >= endTime + 1.0e-9) {
+                        continue;
+                    }
+
+                    auto emitted = event;
+                    emitted.time = absoluteEventTime - startTime;
+                    rendered.push_back(std::move(emitted));
+                }
+            }
+
+            if (!rendered.empty()) {
+                std::sort(rendered.begin(), rendered.end(), [](const auto& left, const auto& right) {
+                    return left.time < right.time;
+                });
+            }
+            capturePlaybackCursorSeconds_ = std::fmod(endTime, clipLength);
+        } else {
+            capturePlaybackCursorSeconds_ = 0.0;
+        }
+    }
+
+    if (!flushedNoteOffs.empty()) {
+        rendered.insert(rendered.begin(), flushedNoteOffs.begin(), flushedNoteOffs.end());
+    }
+
+    if (const juce::SpinLock::ScopedTryLockType ioLock(ioSnapshotLock_); ioLock.isLocked()) {
+        updateActiveNotes(incomingActiveNotes_, incomingEvents);
+        updateActiveNotes(outgoingActiveNotes_, rendered);
+        pushHistory(incomingHistory_, static_cast<int>(incomingEvents.size()));
+        pushHistory(outgoingHistory_, static_cast<int>(rendered.size()));
+        ioSnapshot_ = buildIoSnapshot(incomingEvents, rendered);
+        ioSnapshot_.incomingActive = incomingActiveNotes_;
+        ioSnapshot_.outgoingActive = outgoingActiveNotes_;
+        ioSnapshot_.incomingHistory = incomingHistory_;
+        ioSnapshot_.outgoingHistory = outgoingHistory_;
+        ioSnapshot_.incomingActiveCount = countActiveNotes(incomingActiveNotes_);
+        ioSnapshot_.outgoingActiveCount = countActiveNotes(outgoingActiveNotes_);
+        ioSnapshot_.nodes.clear();
+    }
+
+    eventsToMidiBuffer(rendered, sampleRate, blockSize, midiMessages);
+    captureTimelineSeconds_ += blockDuration;
+    if (captureRecordingEnabled_.load()) {
+        captureRecordingSeconds_.store(juce::jmax(0.0, captureTimelineSeconds_ - captureRecordStartSeconds_));
+    }
+}
+
 juce::AudioProcessorEditor* FabricAudioProcessor::createEditor()
 {
     return new FabricAudioProcessorEditor(*this);
@@ -2150,6 +2318,24 @@ void FabricAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
         state.setProperty("script", scriptText_, nullptr);
     }
     state.setProperty("followHostTempo", followHostTempo_.load(), nullptr);
+    state.setProperty("captureMode", captureMode_.load() == CaptureMode::playbackCaptured ? "playback" : "record", nullptr);
+    state.setProperty("captureRecordStyle", captureRecordStyle_.load() == CaptureRecordStyle::automatic ? "auto" : "manual", nullptr);
+    state.setProperty("captureRecordingEnabled", captureRecordingEnabled_.load(), nullptr);
+    {
+        const juce::ScopedLock lock(captureStateLock_);
+        state.setProperty("captureLengthSeconds", capturedMidiLengthSeconds_, nullptr);
+        state.setProperty("captureExportTempoBpm", captureExportTempoBpm_, nullptr);
+        state.setProperty("captureRecordStartSeconds", captureRecordStartSeconds_, nullptr);
+        for (const auto& event : capturedMidiEvents_) {
+            auto child = juce::ValueTree("CapturedEvent");
+            child.setProperty("time", event.time, nullptr);
+            child.setProperty("status", event.ints.size() > 0 ? event.ints[0] : 0, nullptr);
+            child.setProperty("data1", event.ints.size() > 1 ? event.ints[1] : 0, nullptr);
+            child.setProperty("data2", event.ints.size() > 2 ? event.ints[2] : 0, nullptr);
+            child.setProperty("channel", event.ints.size() > 3 ? event.ints[3] : 1, nullptr);
+            state.appendChild(child, nullptr);
+        }
+    }
 
     juce::MemoryOutputStream stream(destData, false);
     state.writeToStream(stream);
@@ -2163,7 +2349,45 @@ void FabricAudioProcessor::setStateInformation(const void* data, int sizeInBytes
             ? static_cast<bool>(state.getProperty("followHostTempo"))
             : static_cast<bool>(state.getProperty("syncToTransport", true));
         followHostTempo_.store(followHostTempo);
+        captureMode_.store(state.getProperty("captureMode").toString() == "playback"
+            ? CaptureMode::playbackCaptured
+            : CaptureMode::passThroughRecord);
+        captureRecordStyle_.store(state.getProperty("captureRecordStyle").toString() == "auto"
+            ? CaptureRecordStyle::automatic
+            : CaptureRecordStyle::manual);
+        captureRecordingEnabled_.store(static_cast<bool>(state.getProperty("captureRecordingEnabled", false)));
+        {
+            const juce::ScopedLock lock(captureStateLock_);
+            capturedMidiEvents_.clear();
+            capturedMidiLengthSeconds_ = state.getProperty("captureLengthSeconds", 0.0);
+            captureExportTempoBpm_ = state.getProperty("captureExportTempoBpm", 120.0);
+            captureRecordStartSeconds_ = state.getProperty("captureRecordStartSeconds", 0.0);
+            captureStartSeconds_ = capturedMidiLengthSeconds_ > 0.0 ? std::optional<double>(0.0) : std::nullopt;
+            for (int index = 0; index < state.getNumChildren(); ++index) {
+                const auto child = state.getChild(index);
+                if (!child.hasType("CapturedEvent")) {
+                    continue;
+                }
+
+                pulse::Event event;
+                event.type = pulse::SignalType::midi;
+                event.time = static_cast<double>(child.getProperty("time", 0.0));
+                event.ints = {
+                    static_cast<int>(child.getProperty("status", 0)),
+                    static_cast<int>(child.getProperty("data1", 0)),
+                    static_cast<int>(child.getProperty("data2", 0)),
+                    static_cast<int>(child.getProperty("channel", 1))
+                };
+                capturedMidiEvents_.push_back(std::move(event));
+            }
+        }
+        captureTimelineSeconds_ = capturedMidiLengthSeconds_;
+        capturePlaybackCursorSeconds_ = 0.0;
+        captureRecordingSeconds_.store(captureRecordingEnabled_.load()
+            ? juce::jmax(0.0, captureTimelineSeconds_ - captureRecordStartSeconds_)
+            : 0.0);
         compileScript(state.getProperty("script", defaultScript()).toString());
+        captureNeedsFlush_.store(true);
         uiRevision_.fetch_add(1);
         return;
     }
@@ -2356,6 +2580,169 @@ void FabricAudioProcessor::setHostTempoFollowEnabled(bool enabled)
     uiRevision_.fetch_add(1);
 }
 
+FabricAudioProcessor::CaptureStatus FabricAudioProcessor::getCaptureStatus() const
+{
+    CaptureStatus status;
+    status.mode = captureMode_.load();
+    status.recordStyle = captureRecordStyle_.load();
+    status.isRecording = captureRecordingEnabled_.load();
+    const juce::ScopedLock lock(captureStateLock_);
+    status.hasCapture = !capturedMidiEvents_.empty();
+    status.eventCount = static_cast<int>(capturedMidiEvents_.size());
+    status.lengthSeconds = capturedMidiLengthSeconds_;
+    status.recordingSeconds = captureRecordingSeconds_.load();
+    status.exportTempoBpm = captureExportTempoBpm_;
+    for (const auto& event : capturedMidiEvents_) {
+        if (event.type == pulse::SignalType::midi && (event.isNoteOn() || event.isNoteOff())) {
+            ++status.noteEventCount;
+        }
+    }
+    return status;
+}
+
+FabricAudioProcessor::CaptureMode FabricAudioProcessor::getCaptureMode() const
+{
+    return captureMode_.load();
+}
+
+FabricAudioProcessor::CaptureRecordStyle FabricAudioProcessor::getCaptureRecordStyle() const
+{
+    return captureRecordStyle_.load();
+}
+
+void FabricAudioProcessor::setCaptureMode(CaptureMode mode)
+{
+    if (captureMode_.load() == mode) {
+        return;
+    }
+
+    captureMode_.store(mode);
+    if (mode == CaptureMode::playbackCaptured) {
+        captureRecordingEnabled_.store(false);
+        captureRecordingSeconds_.store(0.0);
+    } else if (captureRecordStyle_.load() == CaptureRecordStyle::automatic) {
+        captureRecordingEnabled_.store(true);
+        {
+            const juce::ScopedLock lock(captureStateLock_);
+            captureRecordStartSeconds_ = captureTimelineSeconds_;
+        }
+        captureRecordingSeconds_.store(0.0);
+    }
+    capturePlaybackCursorSeconds_ = 0.0;
+    captureNeedsFlush_.store(true);
+    uiRevision_.fetch_add(1);
+}
+
+void FabricAudioProcessor::setCaptureRecordStyle(CaptureRecordStyle style)
+{
+    if (captureRecordStyle_.load() == style) {
+        return;
+    }
+
+    captureRecordStyle_.store(style);
+    if (style == CaptureRecordStyle::automatic && captureMode_.load() == CaptureMode::passThroughRecord) {
+        captureRecordingEnabled_.store(true);
+        {
+            const juce::ScopedLock lock(captureStateLock_);
+            captureRecordStartSeconds_ = captureTimelineSeconds_;
+        }
+        captureRecordingSeconds_.store(0.0);
+    } else if (style == CaptureRecordStyle::manual) {
+        captureRecordingEnabled_.store(false);
+        captureRecordingSeconds_.store(0.0);
+    }
+    uiRevision_.fetch_add(1);
+}
+
+void FabricAudioProcessor::startCaptureRecording()
+{
+    captureMode_.store(CaptureMode::passThroughRecord);
+    {
+        const juce::ScopedLock lock(captureStateLock_);
+        capturedMidiEvents_.clear();
+        capturedMidiLengthSeconds_ = 0.0;
+        captureStartSeconds_.reset();
+        captureRecordStartSeconds_ = captureTimelineSeconds_;
+    }
+    capturePlaybackCursorSeconds_ = 0.0;
+    captureRecordingSeconds_.store(0.0);
+    captureRecordingEnabled_.store(true);
+    captureNeedsFlush_.store(true);
+    uiRevision_.fetch_add(1);
+}
+
+void FabricAudioProcessor::stopCaptureRecording()
+{
+    if (!captureRecordingEnabled_.load()) {
+        return;
+    }
+
+    captureRecordingEnabled_.store(false);
+    captureRecordingSeconds_.store(0.0);
+    uiRevision_.fetch_add(1);
+}
+
+void FabricAudioProcessor::clearCapturedMidi()
+{
+    {
+        const juce::ScopedLock lock(captureStateLock_);
+        capturedMidiEvents_.clear();
+        capturedMidiLengthSeconds_ = 0.0;
+        captureStartSeconds_.reset();
+        captureRecordStartSeconds_ = 0.0;
+    }
+    captureTimelineSeconds_ = 0.0;
+    capturePlaybackCursorSeconds_ = 0.0;
+    captureRecordingSeconds_.store(0.0);
+    captureRecordingEnabled_.store(false);
+    captureNeedsFlush_.store(true);
+    uiRevision_.fetch_add(1);
+}
+
+bool FabricAudioProcessor::exportCapturedMidiFile(const juce::File& targetFile) const
+{
+    std::vector<pulse::Event> clip;
+    double clipLength = 0.0;
+    double tempoBpm = 120.0;
+    {
+        const juce::ScopedLock lock(captureStateLock_);
+        clip = capturedMidiEvents_;
+        clipLength = capturedMidiLengthSeconds_;
+        tempoBpm = captureExportTempoBpm_;
+    }
+
+    if (clip.empty() || clipLength <= 0.0) {
+        return false;
+    }
+
+    juce::MidiMessageSequence sequence;
+    const double safeTempo = tempoBpm > 0.0 ? tempoBpm : 120.0;
+    constexpr int ticksPerQuarter = 960;
+    const double ticksPerSecond = (safeTempo / 60.0) * static_cast<double>(ticksPerQuarter);
+
+    const auto tempoMicros = static_cast<int>(std::llround((60.0 * 1000000.0) / safeTempo));
+    sequence.addEvent(juce::MidiMessage::tempoMetaEvent(tempoMicros), 0.0);
+    for (const auto& event : clip) {
+        auto message = midiMessageFromEvent(event);
+        if (message.getRawDataSize() <= 0) {
+            continue;
+        }
+        message.setTimeStamp(juce::jmax(0.0, event.time * ticksPerSecond));
+        sequence.addEvent(message);
+    }
+    sequence.updateMatchedPairs();
+
+    juce::MidiFile file;
+    file.setTicksPerQuarterNote(ticksPerQuarter);
+    file.addTrack(sequence);
+
+    juce::FileOutputStream stream(targetFile);
+    if (!stream.openedOk()) {
+        return false;
+    }
+    return file.writeTo(stream);
+}
+
 std::uint64_t FabricAudioProcessor::getUiRevision() const
 {
     return uiRevision_.load();
@@ -2435,6 +2822,11 @@ FabricAudioProcessor::IoSnapshot FabricAudioProcessor::buildIoSnapshot(const std
     }
 
     return snapshot;
+}
+
+juce::MidiMessage FabricAudioProcessor::midiMessageFromEvent(const pulse::Event& event)
+{
+    return eventToMidiMessage(event);
 }
 
 std::vector<FabricAudioProcessor::NodeIoSnapshot> FabricAudioProcessor::buildNodeIoSnapshots(const pulse::Engine& engine)
@@ -2564,13 +2956,34 @@ void FabricAudioProcessor::requestSectionAdvance(const juce::String& moduleName)
 
 juce::String FabricAudioProcessor::defaultScript()
 {
+    if (pluginTargetsCapture()) {
+        return makeCaptureDefaultScript();
+    }
     return pluginTargetsGenerate() ? makeDefaultScript() : makeProcessDefaultScript();
 }
 
 const std::vector<FabricAudioProcessor::FactoryPreset>& FabricAudioProcessor::factoryPresets()
 {
     static const std::vector<FactoryPreset> presets = [] {
-        const auto presetData = pluginTargetsGenerate() ? makeGenerateFactoryPresets() : makeProcessFactoryPresets();
+        std::vector<FactoryPresetData> presetData;
+        if (pluginTargetsCapture()) {
+            presetData = {
+                { "Capture Thru", R"pulse(patch fabric_capture_default
+
+midi in input
+  channel 1
+end
+
+midi out out
+end
+
+input -> out
+end
+)pulse" }
+            };
+        } else {
+            presetData = pluginTargetsGenerate() ? makeGenerateFactoryPresets() : makeProcessFactoryPresets();
+        }
         std::vector<FactoryPreset> result;
         for (const auto& preset : presetData) {
             result.push_back({ preset.name, preset.script });
@@ -3778,6 +4191,9 @@ notes1 -> out
 
 juce::StringArray FabricAudioProcessor::getTutorialNames() const
 {
+    if (pluginTargetsCapture()) {
+        return {};
+    }
     juce::StringArray names;
     const auto wantsGenerate = pluginTargetsGenerate();
     for (const auto& tutorial : tutorials()) {
@@ -3792,6 +4208,9 @@ juce::StringArray FabricAudioProcessor::getTutorialNames() const
 
 std::optional<FabricAudioProcessor::TutorialInfo> FabricAudioProcessor::getTutorial(int index) const
 {
+    if (pluginTargetsCapture()) {
+        return std::nullopt;
+    }
     const auto wantsGenerate = pluginTargetsGenerate();
     int filteredIndex = 0;
     for (const auto& entry : tutorials()) {

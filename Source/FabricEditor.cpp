@@ -26,6 +26,11 @@ bool pluginIsCapture(const juce::String& pluginName)
     return pluginName.containsIgnoreCase("capture");
 }
 
+bool pluginIsHub(const juce::String& pluginName)
+{
+    return pluginName.containsIgnoreCase("hub");
+}
+
 juce::String quickStartTextForPlugin(const juce::String& pluginName)
 {
     if (pluginIsGenerate(pluginName)) {
@@ -58,6 +63,22 @@ Auto: the old behavior, recording while the plugin stays in Record mode.
 Clear Take: erase the current capture.)";
     }
 
+    if (pluginIsHub(pluginName)) {
+        return R"(Quick Start
+1. Use Examples to pick OSC Receive to MIDI or MIDI In to OSC.
+2. Set OSC In and OSC Out ports to match Pure Data.
+3. In OSC Receive to MIDI, incoming OSC becomes MIDI output.
+4. In MIDI In to OSC, live MIDI passes through and is mirrored to OSC.
+
+Pure Data OSC Format
+Send to Fabric: `/fabric/midi` or `/midi` with three ints: status data1 data2
+Example note on: `/fabric/midi 144 60 100`
+Example note off: `/fabric/midi 128 60 0`
+Example CC: `/fabric/midi 176 1 127`
+
+Fabric always sends the same three-int format back out, so Pd can parse it with `oscparse`.)";
+    }
+
     return R"(Quick Start
 1. Send MIDI notes into the plugin from a track or keyboard.
 2. Start with Scale Correct or Hold Longer.
@@ -77,6 +98,9 @@ juce::Colour roleAccentForPlugin(const juce::String& pluginName)
     if (pluginIsCapture(pluginName)) {
         return juce::Colour::fromRGB(52, 146, 102);
     }
+    if (pluginIsHub(pluginName)) {
+        return juce::Colour::fromRGB(160, 86, 42);
+    }
     return pluginIsGenerate(pluginName)
         ? juce::Colour::fromRGB(208, 126, 42)
         : juce::Colour::fromRGB(62, 122, 196);
@@ -86,6 +110,9 @@ juce::String roleLabelForPlugin(const juce::String& pluginName)
 {
     if (pluginIsCapture(pluginName)) {
         return "CAPTURE";
+    }
+    if (pluginIsHub(pluginName)) {
+        return "HUB";
     }
     return pluginIsGenerate(pluginName) ? "GENERATE" : "PROCESS";
 }
@@ -587,6 +614,7 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
     const auto roleAccent = roleAccentForPlugin(pluginName);
     const auto isGenerate = pluginIsGenerate(pluginName);
     const auto isCapture = pluginIsCapture(pluginName);
+    const auto isHub = pluginIsHub(pluginName);
 
     auto bounds = getLocalBounds().reduced(8);
     drawPanel(g, bounds, kPanelStrong, 24.0f);
@@ -602,7 +630,7 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
     header.removeFromLeft(10);
     g.setColour(kMuted.withAlpha(0.95f));
     g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
-    g.drawText(isGenerate ? "TRANSPORT + OUTPUT" : isCapture ? "CAPTURE + OUTPUT" : "INPUT + OUTPUT",
+    g.drawText(isGenerate ? "TRANSPORT + OUTPUT" : isCapture ? "CAPTURE + OUTPUT" : isHub ? "OSC + MIDI" : "INPUT + OUTPUT",
         header.removeFromLeft(160),
         juce::Justification::centredLeft,
         true);
@@ -770,10 +798,10 @@ void FabricAudioProcessorEditor::IoVisualiserComponent::paint(juce::Graphics& g)
         }
     };
 
-    const auto leftTitle = isGenerate ? "Transport / Start-Stop" : isCapture ? "Incoming MIDI" : "Incoming MIDI";
-    const auto rightTitle = isGenerate ? "Generated MIDI" : isCapture ? "Captured / Output" : "Processed MIDI";
-    const auto leftAccent = isGenerate ? roleAccent.brighter(0.05f) : isCapture ? familyColour("input") : familyColour("input");
-    const auto rightAccent = isGenerate ? familyColour("generate") : isCapture ? roleAccent : familyColour("output");
+    const auto leftTitle = isGenerate ? "Transport / Start-Stop" : isCapture ? "Incoming MIDI" : isHub ? "MIDI In / OSC In" : "Incoming MIDI";
+    const auto rightTitle = isGenerate ? "Generated MIDI" : isCapture ? "Captured / Output" : isHub ? "MIDI Out / OSC Out" : "Processed MIDI";
+    const auto leftAccent = isGenerate ? roleAccent.brighter(0.05f) : isCapture ? familyColour("input") : isHub ? familyColour("input") : familyColour("input");
+    const auto rightAccent = isGenerate ? familyColour("generate") : isCapture ? roleAccent : isHub ? roleAccent : familyColour("output");
     drawLane(left, leftTitle, snapshot.incomingCount, snapshot.incomingActiveCount, snapshot.incomingHistory, snapshot.incomingActive, snapshot.incoming, leftAccent);
     drawLane(right, rightTitle, snapshot.outgoingCount, snapshot.outgoingActiveCount, snapshot.outgoingHistory, snapshot.outgoingActive, snapshot.outgoing, rightAccent);
 }
@@ -882,6 +910,7 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
     const auto roleAccent = roleAccentForPlugin(pluginName);
     const auto isGenerate = pluginIsGenerate(pluginName);
     const auto isCapture = pluginIsCapture(pluginName);
+    const auto isHub = pluginIsHub(pluginName);
 
     auto bounds = getLocalBounds().reduced(8);
     drawPanel(g, bounds, kPanel, 22.0f);
@@ -904,7 +933,7 @@ void FabricAudioProcessorEditor::GraphPreviewComponent::paint(juce::Graphics& g)
     roleHeader.removeFromLeft(10);
     g.setColour(kMuted.withAlpha(0.95f));
     g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
-    g.drawText(isGenerate ? "Generate Signal Flow" : isCapture ? "Capture Signal Flow" : "Process Signal Flow",
+    g.drawText(isGenerate ? "Generate Signal Flow" : isCapture ? "Capture Signal Flow" : isHub ? "OSC Hub Flow" : "Process Signal Flow",
         roleHeader.removeFromLeft(190),
         juce::Justification::centredLeft,
         true);
@@ -1112,6 +1141,32 @@ FabricAudioProcessorEditor::FabricAudioProcessorEditor(FabricAudioProcessor& aud
     styleSecondaryButton(clockModeButton_);
     addAndMakeVisible(clockModeButton_);
 
+    const auto configureHubLabel = [](juce::Label& label, const juce::String& text) {
+        label.setText(text, juce::dontSendNotification);
+        label.setColour(juce::Label::textColourId, kMuted);
+        label.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    };
+    configureHubLabel(hubReceivePortLabel_, "OSC In");
+    configureHubLabel(hubSendPortLabel_, "OSC Out");
+    addAndMakeVisible(hubReceivePortLabel_);
+    addAndMakeVisible(hubSendPortLabel_);
+
+    const auto configureHubPortEditor = [](juce::TextEditor& editor) {
+        editor.setInputRestrictions(5, "0123456789");
+        editor.setColour(juce::TextEditor::backgroundColourId, juce::Colour::fromRGBA(255, 255, 255, 120));
+        editor.setColour(juce::TextEditor::outlineColourId, juce::Colour::fromRGBA(24, 24, 26, 55));
+        editor.setColour(juce::TextEditor::textColourId, kInk);
+        editor.setColour(juce::TextEditor::focusedOutlineColourId, kAccent);
+    };
+    configureHubPortEditor(hubReceivePortEditor_);
+    configureHubPortEditor(hubSendPortEditor_);
+    addAndMakeVisible(hubReceivePortEditor_);
+    addAndMakeVisible(hubSendPortEditor_);
+
+    hubApplyPortsButton_.onClick = [this] { applyHubPortChanges(); };
+    styleSecondaryButton(hubApplyPortsButton_);
+    addAndMakeVisible(hubApplyPortsButton_);
+
     captureModeButton_.onClick = [this] {
         const auto nextMode = processor_.getCaptureMode() == FabricAudioProcessor::CaptureMode::passThroughRecord
             ? FabricAudioProcessor::CaptureMode::playbackCaptured
@@ -1303,6 +1358,9 @@ FabricAudioProcessorEditor::FabricAudioProcessorEditor(FabricAudioProcessor& aud
     tutorialLoadButton_.addKeyListener(this);
     compileButton_.addKeyListener(this);
     clockModeButton_.addKeyListener(this);
+    hubReceivePortEditor_.addKeyListener(this);
+    hubSendPortEditor_.addKeyListener(this);
+    hubApplyPortsButton_.addKeyListener(this);
     captureModeButton_.addKeyListener(this);
     captureRecordStyleButton_.addKeyListener(this);
     startCaptureButton_.addKeyListener(this);
@@ -1351,12 +1409,13 @@ void FabricAudioProcessorEditor::paint(juce::Graphics& g)
 
         g.setColour(kMuted);
         g.setFont(juce::Font(juce::FontOptions(12.5f, juce::Font::bold)));
-        g.drawText(pluginIsCapture(processor_.getName()) ? "CAPTURE SETUP" : "PATCH",
+        g.drawText(pluginIsCapture(processor_.getName()) ? "CAPTURE SETUP" : pluginIsHub(processor_.getName()) ? "OSC HUB" : "PATCH",
             layout.editorPanel.withTrimmedBottom(layout.editorPanel.getHeight() - 26).reduced(16, 0),
             juce::Justification::centredLeft,
             true);
         g.drawText(pluginIsGenerate(processor_.getName()) ? "GENERATOR FLOW"
                     : pluginIsCapture(processor_.getName()) ? "CAPTURE FLOW"
+                    : pluginIsHub(processor_.getName()) ? "OSC ROUTING"
                                                            : "PROCESSOR FLOW",
             layout.graphPanel.withTrimmedBottom(layout.graphPanel.getHeight() - 26).reduced(16, 0),
             juce::Justification::centredLeft,
@@ -1380,6 +1439,7 @@ void FabricAudioProcessorEditor::resized()
     const auto controlHeight = 40;
     titleLabel_.setBounds(header.removeFromLeft(168));
     const auto isCapture = pluginIsCapture(processor_.getName());
+    const auto isHub = pluginIsHub(processor_.getName());
 
     auto controls = header.removeFromRight(804);
     controls = controls.withTrimmedTop((controls.getHeight() - controlHeight) / 2).withHeight(controlHeight);
@@ -1400,9 +1460,34 @@ void FabricAudioProcessorEditor::resized()
         controls.removeFromLeft(14);
         ioModuleBox_.setBounds({});
     }
-    if (isCapture) {
+    if (isHub) {
         loadButton_.setBounds({});
         saveButton_.setBounds({});
+        clockModeButton_.setBounds({});
+        compileButton_.setBounds({});
+        captureModeButton_.setBounds({});
+        captureRecordStyleButton_.setBounds({});
+        startCaptureButton_.setBounds({});
+        stopCaptureButton_.setBounds({});
+        clearCaptureButton_.setBounds({});
+        exportCaptureButton_.setBounds({});
+
+        auto hubRow = controls;
+        hubReceivePortLabel_.setBounds(hubRow.removeFromLeft(52));
+        hubReceivePortEditor_.setBounds(hubRow.removeFromLeft(72));
+        hubRow.removeFromLeft(10);
+        hubSendPortLabel_.setBounds(hubRow.removeFromLeft(60));
+        hubSendPortEditor_.setBounds(hubRow.removeFromLeft(72));
+        hubRow.removeFromLeft(10);
+        hubApplyPortsButton_.setBounds(hubRow.removeFromLeft(148));
+    } else if (isCapture) {
+        loadButton_.setBounds({});
+        saveButton_.setBounds({});
+        hubReceivePortLabel_.setBounds({});
+        hubReceivePortEditor_.setBounds({});
+        hubSendPortLabel_.setBounds({});
+        hubSendPortEditor_.setBounds({});
+        hubApplyPortsButton_.setBounds({});
         captureModeButton_.setBounds(controls.removeFromLeft(126));
         controls.removeFromLeft(8);
         captureRecordStyleButton_.setBounds(controls.removeFromLeft(122));
@@ -1421,6 +1506,11 @@ void FabricAudioProcessorEditor::resized()
         controls.removeFromLeft(8);
         saveButton_.setBounds(controls.removeFromLeft(82));
         controls.removeFromLeft(14);
+        hubReceivePortLabel_.setBounds({});
+        hubReceivePortEditor_.setBounds({});
+        hubSendPortLabel_.setBounds({});
+        hubSendPortEditor_.setBounds({});
+        hubApplyPortsButton_.setBounds({});
         captureModeButton_.setBounds({});
         captureRecordStyleButton_.setBounds({});
         startCaptureButton_.setBounds({});
@@ -1563,9 +1653,10 @@ void FabricAudioProcessorEditor::timerCallback()
         if (needsRepaint) {
             sectionPulseOverlay_.repaint();
         }
-        if (pluginIsCapture(processor_.getName())) {
+        if (pluginIsCapture(processor_.getName()) || pluginIsHub(processor_.getName())) {
             stateSummaryLabel_.setText(stateSummaryText(), juce::dontSendNotification);
             refreshCaptureControls();
+            refreshHubControls();
         }
     }
 }
@@ -1704,6 +1795,13 @@ void FabricAudioProcessorEditor::loadSelectedTutorial()
         return;
     }
 
+    if (pluginIsHub(processor_.getName())) {
+        processor_.setCurrentProgram(selectedTutorialIndex_);
+        refreshFromProcessor();
+        updateTutorialSummary();
+        return;
+    }
+
     document_.replaceAllContent(tutorial->script);
     processor_.setPendingScriptText(tutorial->script);
     updateTutorialSummary();
@@ -1719,6 +1817,7 @@ void FabricAudioProcessorEditor::refreshFromProcessor()
 {
     refreshCaptureControls();
     seenRevision_ = processor_.getUiRevision();
+    refreshHubControls();
     const auto latestScript = processor_.getScriptText();
     for (int index = 0; index < tutorialNames_.size(); ++index) {
         const auto tutorial = processor_.getTutorial(index);
@@ -1785,6 +1884,7 @@ void FabricAudioProcessorEditor::refreshFromProcessor()
     stateSummaryLabel_.setText(summaryText, juce::dontSendNotification);
     clockModeButton_.setButtonText(processor_.isHostTempoFollowEnabled() ? "Tempo: Host" : "Tempo: Patch");
     refreshCaptureControls();
+    refreshHubControls();
 
     if (!diagnostics_.empty()) {
         diagnosticsList_.selectRow(0);
@@ -1799,11 +1899,10 @@ void FabricAudioProcessorEditor::applyViewMode()
     const auto showingIo = viewMode_ == ViewMode::io;
     const auto showingLessons = viewMode_ == ViewMode::lessons;
     const auto isCapture = pluginIsCapture(processor_.getName());
+    const auto isHub = pluginIsHub(processor_.getName());
     if (editor_ != nullptr) {
         editor_->setVisible(showingEditor);
     }
-    tutorialBox_.setVisible(!showingIo && !isCapture);
-    tutorialLoadButton_.setVisible(!showingIo && !isCapture);
     ioModuleBox_.setVisible(showingIo);
     graphViewport_.setVisible(showingEditor);
     diagnosticsList_.setVisible(showingEditor && !diagnostics_.empty());
@@ -1822,10 +1921,17 @@ void FabricAudioProcessorEditor::applyViewMode()
     stageCurveBox_.setVisible(showingStageEditor);
     ioVisualiser_.setVisible(showingIo);
     lessonSummary_.setVisible(showingLessons && !isCapture);
-    loadButton_.setVisible(!isCapture);
-    saveButton_.setVisible(!isCapture);
-    clockModeButton_.setVisible(!isCapture);
-    compileButton_.setVisible(!isCapture);
+    loadButton_.setVisible(!isCapture && !isHub);
+    saveButton_.setVisible(!isCapture && !isHub);
+    clockModeButton_.setVisible(!isCapture && !isHub);
+    compileButton_.setVisible(!isCapture && !isHub);
+    tutorialBox_.setVisible(!showingIo && !isCapture);
+    tutorialLoadButton_.setVisible(!showingIo && !isCapture);
+    hubReceivePortLabel_.setVisible(isHub);
+    hubReceivePortEditor_.setVisible(isHub);
+    hubSendPortLabel_.setVisible(isHub);
+    hubSendPortEditor_.setVisible(isHub);
+    hubApplyPortsButton_.setVisible(isHub);
     captureModeButton_.setVisible(isCapture);
     captureRecordStyleButton_.setVisible(isCapture);
     startCaptureButton_.setVisible(isCapture);
@@ -1836,7 +1942,7 @@ void FabricAudioProcessorEditor::applyViewMode()
 
 void FabricAudioProcessorEditor::toggleViewMode()
 {
-    if (pluginIsCapture(processor_.getName())) {
+    if (pluginIsCapture(processor_.getName()) || pluginIsHub(processor_.getName())) {
         viewMode_ = (viewMode_ == ViewMode::editor) ? ViewMode::io : ViewMode::editor;
         applyViewMode();
         repaint();
@@ -1957,6 +2063,34 @@ void FabricAudioProcessorEditor::refreshCaptureControls()
 
     startCaptureButton_.setVisible(manualStyle);
     stopCaptureButton_.setVisible(manualStyle);
+}
+
+void FabricAudioProcessorEditor::refreshHubControls()
+{
+    if (!pluginIsHub(processor_.getName())) {
+        return;
+    }
+
+    const auto status = processor_.getHubStatus();
+    if (!hubReceivePortEditor_.hasKeyboardFocus(true)) {
+        hubReceivePortEditor_.setText(juce::String(status.receivePort), juce::dontSendNotification);
+    }
+    if (!hubSendPortEditor_.hasKeyboardFocus(true)) {
+        hubSendPortEditor_.setText(juce::String(status.sendPort), juce::dontSendNotification);
+    }
+    hubApplyPortsButton_.setButtonText((status.receiveConnected && status.sendConnected) ? "OSC Ready" : "Apply OSC Ports");
+}
+
+void FabricAudioProcessorEditor::applyHubPortChanges()
+{
+    const auto receivePort = hubReceivePortEditor_.getText().getIntValue();
+    const auto sendPort = hubSendPortEditor_.getText().getIntValue();
+    if (receivePort <= 0 || sendPort <= 0) {
+        return;
+    }
+
+    processor_.setHubPorts(receivePort, sendPort);
+    refreshFromProcessor();
 }
 
 void FabricAudioProcessorEditor::jumpToDiagnostic(int row)
@@ -2101,6 +2235,22 @@ void FabricAudioProcessorEditor::updateStateTracking(const FabricAudioProcessor:
 juce::String FabricAudioProcessorEditor::stateSummaryText() const
 {
     juce::StringArray parts;
+    if (pluginIsHub(processor_.getName())) {
+        const auto hub = processor_.getHubStatus();
+        const auto modeText = hub.mode == FabricAudioProcessor::HubMode::receiveFromOsc
+            ? "Receive preset: OSC becomes MIDI output."
+            : (hub.mode == FabricAudioProcessor::HubMode::sendIncomingToOsc
+                ? "Send preset: live MIDI passes through and is mirrored to OSC."
+                : "Bridge mode: live MIDI and OSC are both active.");
+        parts.add(modeText);
+        parts.add("OSC In " + juce::String(hub.receivePort) + (hub.receiveConnected ? " ready" : " unavailable")
+            + "   OSC Out 127.0.0.1:" + juce::String(hub.sendPort) + (hub.sendConnected ? " ready" : " unavailable"));
+        parts.add("Pure Data format: /fabric/midi status data1 data2");
+        parts.add("Traffic: received " + juce::String(static_cast<juce::int64>(hub.receivedMessageCount))
+            + "   sent " + juce::String(static_cast<juce::int64>(hub.sentMessageCount)));
+        return parts.joinIntoString("   ");
+    }
+
     if (pluginIsCapture(processor_.getName())) {
         const auto capture = processor_.getCaptureStatus();
         if (capture.mode == FabricAudioProcessor::CaptureMode::passThroughRecord) {

@@ -152,6 +152,8 @@ private:
     void loadSelectedTutorial();
     void setGraphScope(const juce::String& scope);
     void refreshCaptureControls();
+    void refreshHubControls();
+    void applyHubPortChanges();
 
     FabricAudioProcessor& processor_;
     juce::Label titleLabel_;
@@ -162,6 +164,11 @@ private:
     juce::TextButton loadButton_ { "Load" };
     juce::TextButton saveButton_ { "Save" };
     juce::TextButton clockModeButton_;
+    juce::Label hubReceivePortLabel_;
+    juce::TextEditor hubReceivePortEditor_;
+    juce::Label hubSendPortLabel_;
+    juce::TextEditor hubSendPortEditor_;
+    juce::TextButton hubApplyPortsButton_ { "Apply OSC Ports" };
     juce::TextButton captureModeButton_;
     juce::TextButton captureRecordStyleButton_;
     juce::TextButton startCaptureButton_ { "Start Recording" };

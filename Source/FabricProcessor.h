@@ -1,6 +1,7 @@
 #pragma once
 
 #include <JuceHeader.h>
+#include <juce_osc/juce_osc.h>
 #include "pulse/JuceIntegration.hpp"
 
 #include <atomic>
@@ -10,7 +11,10 @@
 #include <unordered_map>
 #include <vector>
 
-class FabricAudioProcessor final : public juce::AudioProcessor
+class FabricAudioProcessor final
+    : public juce::AudioProcessor
+    , private juce::OSCReceiver
+    , private juce::OSCReceiver::Listener<juce::OSCReceiver::RealtimeCallback>
 {
 public:
     enum class CaptureRecordStyle {
@@ -21,6 +25,12 @@ public:
     enum class CaptureMode {
         passThroughRecord,
         playbackCaptured
+    };
+
+    enum class HubMode {
+        bridge,
+        receiveFromOsc,
+        sendIncomingToOsc
     };
 
     enum class NodeProcessingMode {
@@ -133,6 +143,16 @@ public:
         double exportTempoBpm = 120.0;
     };
 
+    struct HubStatus {
+        HubMode mode = HubMode::bridge;
+        int receivePort = 9000;
+        int sendPort = 9001;
+        bool receiveConnected = false;
+        bool sendConnected = false;
+        std::uint64_t receivedMessageCount = 0;
+        std::uint64_t sentMessageCount = 0;
+    };
+
     FabricAudioProcessor();
     ~FabricAudioProcessor() override;
 
@@ -183,6 +203,9 @@ public:
     void stopCaptureRecording();
     void clearCapturedMidi();
     bool exportCapturedMidiFile(const juce::File& targetFile) const;
+    HubStatus getHubStatus() const;
+    void setHubPorts(int receivePort, int sendPort);
+    void setHubMode(HubMode mode);
     std::uint64_t getUiRevision() const;
     bool isCompileInProgress() const;
     void requestSectionRecall(const juce::String& moduleName, int sectionIndex);
@@ -231,10 +254,14 @@ private:
     static void pushHistory(std::array<std::uint8_t, 32>& history, int count);
     static int countActiveNotes(const std::array<std::uint8_t, 128>& activeNotes);
     void processCaptureBlock(juce::MidiBuffer& midiMessages, double sampleRate, int blockSize);
+    void processHubBlock(juce::MidiBuffer& midiMessages);
+    void refreshHubConnections();
+    void oscMessageReceived(const juce::OSCMessage& message) override;
 
     juce::CriticalSection uiStateLock_;
     mutable juce::SpinLock ioSnapshotLock_;
     mutable juce::CriticalSection captureStateLock_;
+    mutable juce::CriticalSection hubStateLock_;
     juce::ThreadPool compilePool_ { 1 };
     std::shared_ptr<EngineState> activeState_;
     juce::String scriptText_;
@@ -273,6 +300,15 @@ private:
     double captureRecordStartSeconds_ = 0.0;
     std::atomic<double> captureRecordingSeconds_ { 0.0 };
     std::atomic<bool> captureNeedsFlush_ { false };
+    juce::OSCSender hubOscSender_;
+    std::vector<juce::MidiMessage> hubPendingIncomingMidi_;
+    std::atomic<HubMode> hubMode_ { HubMode::bridge };
+    std::atomic<int> hubReceivePort_ { 9000 };
+    std::atomic<int> hubSendPort_ { 9001 };
+    std::atomic<bool> hubReceiveConnected_ { false };
+    std::atomic<bool> hubSendConnected_ { false };
+    std::atomic<std::uint64_t> hubReceivedMessageCount_ { 0 };
+    std::atomic<std::uint64_t> hubSentMessageCount_ { 0 };
     bool transportStateKnown_ = false;
     bool transportWasPlaying_ = false;
 

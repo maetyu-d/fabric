@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(Fabric VERSION 0.2.6 LANGUAGES C CXX)
+project(Fabric VERSION 0.2.7 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -89,6 +89,7 @@ function(add_fabric_plugin target_name bundle_id plugin_code product_name mode_d
       pulse
       juce::juce_audio_utils
       juce::juce_gui_extra
+      juce::juce_osc
     PUBLIC
       juce::juce_recommended_config_flags
       juce::juce_recommended_lto_flags
@@ -101,3 +102,4 @@ endfunction()
 add_fabric_plugin(FabricGeneratePlugin "space.matd.fabric.generate" FbGn "Fabric Generate" FABRIC_PLUGIN_MODE_GENERATE)
 add_fabric_plugin(FabricProcessPlugin "space.matd.fabric.process" FbPr "Fabric Process" FABRIC_PLUGIN_MODE_PROCESS)
 add_fabric_plugin(FabricCapturePlugin "space.matd.fabric.capture" FbCp "Fabric Capture" FABRIC_PLUGIN_MODE_CAPTURE)
+add_fabric_plugin(FabricHubPlugin "space.matd.fabric.hub" FbHb "Fabric Hub" FABRIC_PLUGIN_MODE_HUB)

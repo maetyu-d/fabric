@@ -47,6 +47,15 @@ constexpr bool pluginTargetsCapture()
 #endif
 }
 
+constexpr bool pluginTargetsHub()
+{
+#if defined(FABRIC_PLUGIN_MODE_HUB)
+    return true;
+#else
+    return false;
+#endif
+}
+
 double extractTempoBpm(const juce::String& scriptText)
 {
     for (const auto& line : juce::StringArray::fromLines(scriptText)) {
@@ -132,6 +141,32 @@ juce::String makeCaptureDefaultScript()
 
 midi in input
   channel 1
+end
+
+midi out out
+end
+
+input -> out
+end
+)pulse";
+}
+
+juce::String makeHubDefaultScript()
+{
+    return R"pulse(patch fabric_hub_receive
+
+midi out out
+end
+
+end
+)pulse";
+}
+
+juce::String makeHubSendDefaultScript()
+{
+    return R"pulse(patch fabric_hub_send
+
+midi in input
 end
 
 midi out out
@@ -1878,6 +1913,7 @@ juce::MidiMessage eventToMidiMessage(const pulse::Event& event)
 struct FabricAudioProcessor::FactoryPreset {
     juce::String name;
     juce::String script;
+    std::optional<HubMode> hubMode;
 };
 
 struct FabricAudioProcessor::TutorialEntry {
@@ -1915,12 +1951,20 @@ FabricAudioProcessor::FabricAudioProcessor()
 {
     scriptText_ = defaultScript();
     currentProgramIndex_ = 0;
+    if (pluginTargetsHub()) {
+        juce::OSCReceiver::addListener(this);
+        refreshHubConnections();
+    }
     compileScript(scriptText_);
 }
 
 FabricAudioProcessor::~FabricAudioProcessor()
 {
     compilePool_.removeAllJobs(true, 2000);
+    if (pluginTargetsHub()) {
+        disconnect();
+        hubOscSender_.disconnect();
+    }
 }
 
 void FabricAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
@@ -1961,6 +2005,11 @@ void FabricAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
 {
     juce::ScopedNoDenormals noDenormals;
     buffer.clear();
+
+    if (pluginTargetsHub()) {
+        processHubBlock(midiMessages);
+        return;
+    }
 
     if (pluginTargetsCapture()) {
         processCaptureBlock(midiMessages, sampleRate_.load(), buffer.getNumSamples());
@@ -2241,6 +2290,107 @@ void FabricAudioProcessor::processCaptureBlock(juce::MidiBuffer& midiMessages, d
     }
 }
 
+void FabricAudioProcessor::processHubBlock(juce::MidiBuffer& midiMessages)
+{
+    auto incomingEvents = midiBufferToEvents(midiMessages);
+    juce::MidiBuffer outgoing;
+    const auto hubMode = hubMode_.load();
+
+    if (hubMode == HubMode::bridge || hubMode == HubMode::sendIncomingToOsc) {
+        outgoing = midiMessages;
+    }
+
+    if ((hubMode == HubMode::bridge || hubMode == HubMode::sendIncomingToOsc) && hubSendConnected_.load()) {
+        for (const auto metadata : midiMessages) {
+            const auto& message = metadata.getMessage();
+            if (message.isSysEx() || message.isMetaEvent() || message.getRawDataSize() < 3) {
+                continue;
+            }
+
+            const auto* raw = message.getRawData();
+            if (hubOscSender_.send("/fabric/midi",
+                    static_cast<int>(raw[0]),
+                    static_cast<int>(raw[1]),
+                    static_cast<int>(raw[2]))) {
+                hubSentMessageCount_.fetch_add(1);
+            }
+        }
+    }
+
+    if (hubMode == HubMode::bridge || hubMode == HubMode::receiveFromOsc) {
+        const juce::ScopedLock lock(hubStateLock_);
+        for (const auto& message : hubPendingIncomingMidi_) {
+            outgoing.addEvent(message, 0);
+        }
+        hubPendingIncomingMidi_.clear();
+    }
+
+    midiMessages.swapWith(outgoing);
+    const auto outgoingEvents = midiBufferToEvents(midiMessages);
+
+    if (const juce::SpinLock::ScopedTryLockType ioLock(ioSnapshotLock_); ioLock.isLocked()) {
+        updateActiveNotes(incomingActiveNotes_, incomingEvents);
+        updateActiveNotes(outgoingActiveNotes_, outgoingEvents);
+        pushHistory(incomingHistory_, static_cast<int>(incomingEvents.size()));
+        pushHistory(outgoingHistory_, static_cast<int>(outgoingEvents.size()));
+        ioSnapshot_ = buildIoSnapshot(incomingEvents, outgoingEvents);
+        ioSnapshot_.incomingActive = incomingActiveNotes_;
+        ioSnapshot_.outgoingActive = outgoingActiveNotes_;
+        ioSnapshot_.incomingHistory = incomingHistory_;
+        ioSnapshot_.outgoingHistory = outgoingHistory_;
+        ioSnapshot_.incomingActiveCount = countActiveNotes(incomingActiveNotes_);
+        ioSnapshot_.outgoingActiveCount = countActiveNotes(outgoingActiveNotes_);
+        ioSnapshot_.nodes.clear();
+    }
+}
+
+void FabricAudioProcessor::refreshHubConnections()
+{
+    if (!pluginTargetsHub()) {
+        return;
+    }
+
+    disconnect();
+    hubOscSender_.disconnect();
+
+    const auto receivePort = hubReceivePort_.load();
+    const auto sendPort = hubSendPort_.load();
+    const auto receiveOk = receivePort > 0 && connect(receivePort);
+    const auto sendOk = sendPort > 0 && hubOscSender_.connect("127.0.0.1", sendPort);
+    hubReceiveConnected_.store(receiveOk);
+    hubSendConnected_.store(sendOk);
+}
+
+void FabricAudioProcessor::oscMessageReceived(const juce::OSCMessage& message)
+{
+    const auto address = message.getAddressPattern().toString();
+    if (address != "/fabric/midi" && address != "/midi") {
+        return;
+    }
+    if (message.size() < 3 || !message[0].isInt32() || !message[1].isInt32() || !message[2].isInt32()) {
+        return;
+    }
+
+    const auto status = juce::jlimit(0, 255, message[0].getInt32());
+    const auto data1 = juce::jlimit(0, 127, message[1].getInt32());
+    const auto data2 = juce::jlimit(0, 127, message[2].getInt32());
+    const juce::uint8 raw[] {
+        static_cast<juce::uint8>(status),
+        static_cast<juce::uint8>(data1),
+        static_cast<juce::uint8>(data2)
+    };
+    juce::MidiMessage midi(raw, 3);
+    if (midi.getRawDataSize() <= 0) {
+        return;
+    }
+
+    {
+        const juce::ScopedLock lock(hubStateLock_);
+        hubPendingIncomingMidi_.push_back(midi);
+    }
+    hubReceivedMessageCount_.fetch_add(1);
+}
+
 juce::AudioProcessorEditor* FabricAudioProcessor::createEditor()
 {
     return new FabricAudioProcessorEditor(*this);
@@ -2294,7 +2444,11 @@ void FabricAudioProcessor::setCurrentProgram(int index)
     }
 
     currentProgramIndex_ = index;
-    setPendingScriptText(presets[static_cast<std::size_t>(index)].script, true);
+    const auto& preset = presets[static_cast<std::size_t>(index)];
+    if (pluginTargetsHub() && preset.hubMode.has_value()) {
+        setHubMode(*preset.hubMode);
+    }
+    setPendingScriptText(preset.script, true);
 }
 
 const juce::String FabricAudioProcessor::getProgramName(int index)
@@ -2318,6 +2472,9 @@ void FabricAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
         state.setProperty("script", scriptText_, nullptr);
     }
     state.setProperty("followHostTempo", followHostTempo_.load(), nullptr);
+    state.setProperty("hubMode", static_cast<int>(hubMode_.load()), nullptr);
+    state.setProperty("hubReceivePort", hubReceivePort_.load(), nullptr);
+    state.setProperty("hubSendPort", hubSendPort_.load(), nullptr);
     state.setProperty("captureMode", captureMode_.load() == CaptureMode::playbackCaptured ? "playback" : "record", nullptr);
     state.setProperty("captureRecordStyle", captureRecordStyle_.load() == CaptureRecordStyle::automatic ? "auto" : "manual", nullptr);
     state.setProperty("captureRecordingEnabled", captureRecordingEnabled_.load(), nullptr);
@@ -2349,6 +2506,20 @@ void FabricAudioProcessor::setStateInformation(const void* data, int sizeInBytes
             ? static_cast<bool>(state.getProperty("followHostTempo"))
             : static_cast<bool>(state.getProperty("syncToTransport", true));
         followHostTempo_.store(followHostTempo);
+        if (state.hasProperty("hubMode")) {
+            const auto hubModeValue = static_cast<int>(state.getProperty("hubMode"));
+            if (hubModeValue == static_cast<int>(HubMode::receiveFromOsc)) {
+                hubMode_.store(HubMode::receiveFromOsc);
+            } else if (hubModeValue == static_cast<int>(HubMode::sendIncomingToOsc)) {
+                hubMode_.store(HubMode::sendIncomingToOsc);
+            } else {
+                hubMode_.store(HubMode::bridge);
+            }
+        } else {
+            hubMode_.store(HubMode::bridge);
+        }
+        hubReceivePort_.store(static_cast<int>(state.getProperty("hubReceivePort", hubReceivePort_.load())));
+        hubSendPort_.store(static_cast<int>(state.getProperty("hubSendPort", hubSendPort_.load())));
         captureMode_.store(state.getProperty("captureMode").toString() == "playback"
             ? CaptureMode::playbackCaptured
             : CaptureMode::passThroughRecord);
@@ -2386,6 +2557,7 @@ void FabricAudioProcessor::setStateInformation(const void* data, int sizeInBytes
         captureRecordingSeconds_.store(captureRecordingEnabled_.load()
             ? juce::jmax(0.0, captureTimelineSeconds_ - captureRecordStartSeconds_)
             : 0.0);
+        refreshHubConnections();
         compileScript(state.getProperty("script", defaultScript()).toString());
         captureNeedsFlush_.store(true);
         uiRevision_.fetch_add(1);
@@ -2743,6 +2915,45 @@ bool FabricAudioProcessor::exportCapturedMidiFile(const juce::File& targetFile) 
     return file.writeTo(stream);
 }
 
+FabricAudioProcessor::HubStatus FabricAudioProcessor::getHubStatus() const
+{
+    HubStatus status;
+    status.mode = hubMode_.load();
+    status.receivePort = hubReceivePort_.load();
+    status.sendPort = hubSendPort_.load();
+    status.receiveConnected = hubReceiveConnected_.load();
+    status.sendConnected = hubSendConnected_.load();
+    status.receivedMessageCount = hubReceivedMessageCount_.load();
+    status.sentMessageCount = hubSentMessageCount_.load();
+    return status;
+}
+
+void FabricAudioProcessor::setHubPorts(int receivePort, int sendPort)
+{
+    receivePort = juce::jlimit(1, 65535, receivePort);
+    sendPort = juce::jlimit(1, 65535, sendPort);
+    hubReceivePort_.store(receivePort);
+    hubSendPort_.store(sendPort);
+    refreshHubConnections();
+    uiRevision_.fetch_add(1);
+}
+
+void FabricAudioProcessor::setHubMode(HubMode mode)
+{
+    if (hubMode_.load() == mode) {
+        return;
+    }
+
+    hubMode_.store(mode);
+    {
+        const juce::ScopedLock lock(hubStateLock_);
+        hubPendingIncomingMidi_.clear();
+    }
+    incomingActiveNotes_.fill(0);
+    outgoingActiveNotes_.fill(0);
+    uiRevision_.fetch_add(1);
+}
+
 std::uint64_t FabricAudioProcessor::getUiRevision() const
 {
     return uiRevision_.load();
@@ -2956,6 +3167,9 @@ void FabricAudioProcessor::requestSectionAdvance(const juce::String& moduleName)
 
 juce::String FabricAudioProcessor::defaultScript()
 {
+    if (pluginTargetsHub()) {
+        return makeHubDefaultScript();
+    }
     if (pluginTargetsCapture()) {
         return makeCaptureDefaultScript();
     }
@@ -2966,7 +3180,12 @@ const std::vector<FabricAudioProcessor::FactoryPreset>& FabricAudioProcessor::fa
 {
     static const std::vector<FactoryPreset> presets = [] {
         std::vector<FactoryPresetData> presetData;
-        if (pluginTargetsCapture()) {
+        if (pluginTargetsHub()) {
+            return std::vector<FactoryPreset> {
+                { "OSC Receive to MIDI", makeHubDefaultScript(), HubMode::receiveFromOsc },
+                { "MIDI In to OSC", makeHubSendDefaultScript(), HubMode::sendIncomingToOsc }
+            };
+        } else if (pluginTargetsCapture()) {
             presetData = {
                 { "Capture Thru", R"pulse(patch fabric_capture_default
 
@@ -2986,7 +3205,7 @@ end
         }
         std::vector<FactoryPreset> result;
         for (const auto& preset : presetData) {
-            result.push_back({ preset.name, preset.script });
+            result.push_back({ preset.name, preset.script, std::nullopt });
         }
         return result;
     }();
@@ -4191,6 +4410,14 @@ notes1 -> out
 
 juce::StringArray FabricAudioProcessor::getTutorialNames() const
 {
+    if (pluginTargetsHub()) {
+        juce::StringArray names;
+        for (const auto& preset : factoryPresets()) {
+            names.add(preset.name);
+        }
+        return names;
+    }
+
     if (pluginTargetsCapture()) {
         return {};
     }
@@ -4208,6 +4435,25 @@ juce::StringArray FabricAudioProcessor::getTutorialNames() const
 
 std::optional<FabricAudioProcessor::TutorialInfo> FabricAudioProcessor::getTutorial(int index) const
 {
+    if (pluginTargetsHub()) {
+        const auto& presets = factoryPresets();
+        if (index < 0 || index >= static_cast<int>(presets.size())) {
+            return std::nullopt;
+        }
+
+        const auto& preset = presets[static_cast<std::size_t>(index)];
+        juce::String summary;
+        if (preset.hubMode == HubMode::receiveFromOsc) {
+            summary = "Receive MIDI over OSC from Pure Data or another OSC source and turn it into MIDI output inside Fabric Hub.";
+        } else if (preset.hubMode == HubMode::sendIncomingToOsc) {
+            summary = "Take live incoming MIDI, pass it through locally, and mirror the same events out over OSC for Pure Data.";
+        } else {
+            summary = "Bridge live MIDI and OSC together in both directions.";
+        }
+
+        return TutorialInfo { preset.name, summary, preset.script };
+    }
+
     if (pluginTargetsCapture()) {
         return std::nullopt;
     }
